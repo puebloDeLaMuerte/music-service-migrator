@@ -146,18 +146,21 @@ class MigratorApp(App):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.list_view.id == "nav-list":
-            self._handle_nav_selected(event)
+            self._activate_nav_item(event.item)
 
-    def _handle_nav_selected(self, event: ListView.Selected) -> None:
-        item = event.item
-        if not isinstance(item, NavItem) or not item.view_id:
+    def _activate_nav_item(self, item: ListItem | None) -> None:
+        """Switch to the view for this row (if any), then focus content when unchanged."""
+        if not isinstance(item, NavItem):
             return
-        if item.view_id == "quit":
+        vid = item.view_id
+        if not vid or vid == "---":
+            return
+        if vid == "quit":
             self.exit()
             return
-        if item.view_id != self._active_view_id:
+        if vid != self._active_view_id:
             self.run_worker(
-                self._do_switch_view(item.view_id),
+                self._do_switch_view(vid),
                 group="view-switch",
                 exclusive=True,
             )
@@ -177,6 +180,19 @@ class MigratorApp(App):
 
     def action_zone_right(self) -> None:
         if self._in_sidebar():
+            nav = self.query_one("#nav-list", ListView)
+            idx = nav.index
+            if idx is not None:
+                children = list(nav.children)
+                if 0 <= idx < len(children):
+                    item = children[idx]
+                    if (
+                        isinstance(item, NavItem)
+                        and item.view_id
+                        and item.view_id != "---"
+                    ):
+                        self._activate_nav_item(item)
+                        return
             self._focus_content()
             return
         view = self._active_view

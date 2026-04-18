@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _loaded = False
@@ -20,6 +20,22 @@ def _ensure_loaded() -> None:
     if not _loaded:
         load_dotenv(_PROJECT_ROOT / ".env")
         _loaded = True
+
+
+def env_file_path() -> Path:
+    """Path to the project root ``.env`` file (created on first write)."""
+    return _PROJECT_ROOT / ".env"
+
+
+def write_env_key(key: str, value: str) -> None:
+    """Persist ``key=value`` to ``.env`` and reload the process environment."""
+    _ensure_loaded()
+    path = env_file_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    set_key(str(path), key, value)
+    global _loaded
+    _loaded = False
+    load_dotenv(path, override=True)
 
 
 def get(key: str, default: str | None = None) -> str | None:
@@ -63,3 +79,17 @@ def tui_status_flash_seconds() -> float:
     except (TypeError, ValueError):
         return 5.0
     return max(0.0, value)
+
+
+def p2a_always_keep_leftovers() -> bool:
+    """Playlist→Album Extract+delete: skip the loose-tracks modal and always keep the playlist file.
+
+    When album tracks are removed but other tracks remain, the TUI normally asks
+    whether to keep a trimmed playlist file or delete it. If this is true, the
+    file is always kept (same as choosing “Keep file” in that dialog).
+
+    Set env ``P2A_ALWAYS_KEEP_LEFTOVERS`` to ``1``, ``true``, ``yes``, or ``on``.
+    """
+    _ensure_loaded()
+    raw = (get("P2A_ALWAYS_KEEP_LEFTOVERS", "") or "").strip().lower()
+    return raw in ("1", "true", "yes", "on")

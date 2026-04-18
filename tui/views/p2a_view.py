@@ -14,6 +14,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Label, ListItem, ListView, Static
 
+from common.config import p2a_always_keep_leftovers
 from tui.transient_status import TransientStatus
 from tui.views.base import BaseView
 
@@ -486,18 +487,21 @@ class P2AView(BaseView):
             if not ok:
                 return
             if result.loose_track_count > 0:
-                body = (
-                    f"This playlist has [bold]{result.loose_track_count}[/] loose "
-                    "track(s) not tied to the album(s) you are extracting.\n\n"
-                    "After removing the album tracks, do you want to keep a playlist "
-                    "file with what is left, or delete the playlist file entirely?"
-                )
-                self.app.push_screen(
-                    LeftoversModal(body),
-                    lambda keep_file: self._run_extract_delete(
-                        pl, groups, keep_file
-                    ),
-                )
+                if p2a_always_keep_leftovers():
+                    self._run_extract_delete(pl, groups, True)
+                else:
+                    body = (
+                        f"This playlist has [bold]{result.loose_track_count}[/] loose "
+                        "track(s) not tied to the album(s) you are extracting.\n\n"
+                        "After removing the album tracks, do you want to keep a playlist "
+                        "file with what is left, or delete the playlist file entirely?"
+                    )
+                    self.app.push_screen(
+                        LeftoversModal(body),
+                        lambda keep_file: self._run_extract_delete(
+                            pl, groups, keep_file
+                        ),
+                    )
             else:
                 self._run_extract_delete(pl, groups, True)
 

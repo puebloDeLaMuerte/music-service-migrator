@@ -28,6 +28,16 @@ def _track_key(pt: PlaylistTrack) -> str:
     return f"{pt.track.name.lower().strip()}|{artists}"
 
 
+def playlist_track_key(pt: PlaylistTrack) -> str:
+    """Public alias for the same identity string used by :class:`Duplicate` detection."""
+    return _track_key(pt)
+
+
+def duplicate_fingerprint(d: Duplicate) -> str:
+    """Stable id for a duplicate group (matches :func:`playlist_track_key` for member tracks)."""
+    return f"{d.track_name}|{d.artists}"
+
+
 def find_duplicates_within(playlist: Playlist) -> list[Duplicate]:
     """Find tracks that appear more than once inside a single playlist."""
     seen: dict[str, list[tuple[str, int]]] = {}

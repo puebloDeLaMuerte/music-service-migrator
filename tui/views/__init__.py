@@ -18,6 +18,7 @@ MENU: list[tuple[str, str]] = [
     ("Images", "data-images"),
     ("", "---"),
     ("About", "about"),
+    ("Settings", "settings"),
     ("Quit", "quit"),
 ]
 
@@ -26,6 +27,7 @@ def create_view(view_id: str, **kwargs):
     """Instantiate a view widget by its menu ID."""
     from tui.views.about_view import AboutView
     from tui.views.dedupe_view import DedupeView
+    from tui.views.settings_view import SettingsView
     from tui.views.images_view import ImagesView
     from tui.views.p2a_view import P2AView
     from tui.views.service_view import ServiceView
@@ -43,4 +45,6 @@ def create_view(view_id: str, **kwargs):
         return ImagesView()
     if view_id == "about":
         return AboutView()
+    if view_id == "settings":
+        return SettingsView()
     return StubView(view_id)
