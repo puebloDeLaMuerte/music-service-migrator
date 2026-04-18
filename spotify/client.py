@@ -14,6 +14,7 @@ log = get_logger(__name__)
 _client: spotipy.Spotify | None = None
 
 SCOPE = " ".join([
+    "user-read-private",
     "user-library-read",
     "user-follow-read",
     "playlist-read-private",

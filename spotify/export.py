@@ -96,7 +96,11 @@ def _paginate(first_page, sp) -> list[dict]:
 
 def fetch_playlist_tracks(playlist_id: str) -> list[PlaylistTrack]:
     sp = get_client()
-    items = _paginate(sp.playlist_items(playlist_id, limit=100), sp)
+    items = _paginate(
+        sp.playlist_items(playlist_id, limit=100, market="from_token",
+                          additional_types=("track",)),
+        sp,
+    )
     tracks: list[PlaylistTrack] = []
     for pos, item in enumerate(items):
         pt = _parse_track_item(item)
@@ -107,12 +111,24 @@ def fetch_playlist_tracks(playlist_id: str) -> list[PlaylistTrack]:
 
 
 def fetch_all_playlists() -> list[Playlist]:
+    from spotipy.exceptions import SpotifyException
+
     sp = get_client()
     raw_playlists = _paginate(sp.current_user_playlists(limit=50), sp)
     playlists: list[Playlist] = []
+    skipped = 0
     for item in raw_playlists:
-        log.info("Fetching tracks for '%s' (%d tracks)…", item["name"], item["tracks"]["total"])
-        tracks = fetch_playlist_tracks(item["id"])
+        track_total = (item.get("tracks") or {}).get("total", "?")
+        log.info("Fetching tracks for '%s' (%s tracks)…", item["name"], track_total)
+        try:
+            tracks = fetch_playlist_tracks(item["id"])
+        except SpotifyException as exc:
+            log.warning(
+                "Skipping '%s' – API returned %s: %s",
+                item["name"], exc.http_status, exc.msg,
+            )
+            skipped += 1
+            continue
         playlists.append(
             Playlist(
                 name=item["name"],
@@ -124,7 +140,7 @@ def fetch_all_playlists() -> list[Playlist]:
                 service=SERVICE,
             )
         )
-    log.info("Fetched %d playlists", len(playlists))
+    log.info("Fetched %d playlists (%d skipped)", len(playlists), skipped)
     return playlists
 
 
