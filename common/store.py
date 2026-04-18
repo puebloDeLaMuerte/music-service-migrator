@@ -36,7 +36,7 @@ from common.models import (
 log = get_logger(__name__)
 
 
-def _sanitise_filename(name: str) -> str:
+def sanitise_filename(name: str) -> str:
     """Turn a playlist name into a safe, readable filename stem."""
     name = unicodedata.normalize("NFC", name)
     name = re.sub(r"[^\w\s\-]", "", name, flags=re.UNICODE)
@@ -268,7 +268,7 @@ def save_library(library: Library) -> Path:
 
     pl_dir = sdir / "playlists"
     for pl in library.playlists:
-        fname = _sanitise_filename(pl.name) + ".json"
+        fname = sanitise_filename(pl.name) + ".json"
         _write_json(pl_dir / fname, _playlist_to_dict(pl))
 
     if library.liked_songs:

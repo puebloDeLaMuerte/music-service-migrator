@@ -2,9 +2,12 @@
 
 Usage:
     python cli.py spotify pull
-    python cli.py spotify dedupe
-    python cli.py spotify detect-albums
-    python cli.py migrate spotify-to-tidal          (future)
+    python cli.py spotify push              (future)
+    python cli.py data dedupe
+    python cli.py data playlist2album
+    python cli.py data playlistimages
+    python cli.py tidal pull                (future)
+    python cli.py tidal push                (future)
 """
 
 from __future__ import annotations
@@ -47,7 +50,7 @@ def main() -> None:
 
 @main.group()
 def spotify() -> None:
-    """Spotify library tools."""
+    """Spotify ↔ API commands (pull / push)."""
 
 
 @spotify.command()
@@ -73,6 +76,20 @@ def pull() -> None:
 
 @spotify.command()
 @_handle_spotify_errors
+def push() -> None:
+    """Push local changes back to Spotify."""
+    click.echo("Not yet implemented.")
+
+
+# ── Data sub-commands (operate on stored data) ───────────────────────────────
+
+
+@main.group()
+def data() -> None:
+    """Analyse & transform locally stored library data."""
+
+
+@data.command()
 def dedupe() -> None:
     """Find duplicate tracks within and across playlists."""
     from common.store import load_library
@@ -97,10 +114,9 @@ def dedupe() -> None:
         click.echo(f"    in: {locations}\n")
 
 
-@spotify.command("detect-albums")
-@_handle_spotify_errors
-def detect_albums() -> None:
-    """Flag playlists that are really just full albums."""
+@data.command()
+def playlist2album() -> None:
+    """Detect albums embedded in playlists."""
     from common.store import load_library
     from spotify.album_detect import analyse_playlist
 
@@ -134,17 +150,41 @@ def detect_albums() -> None:
             click.echo(f"    + {result.loose_track_count} tracks not part of any detected album")
 
 
-# ── Migrate sub-commands (future) ────────────────────────────────────────────
+@data.command()
+def playlistimages() -> None:
+    """Download playlist artwork at the highest available resolution."""
+    from common.store import load_library
+    from data.images import download_all_artwork
+
+    click.echo("Loading stored Spotify library…")
+    library = load_library("spotify")
+
+    if not library.playlists:
+        click.echo("No playlists found. Run 'spotify pull' first.")
+        return
+
+    click.echo(f"Downloading artwork for {len(library.playlists)} playlists…")
+    downloaded, skipped = download_all_artwork(library)
+    click.echo(f"Done: {downloaded} downloaded, {skipped} skipped (no artwork).")
+
+
+# ── Tidal sub-commands (future) ──────────────────────────────────────────────
 
 
 @main.group()
-def migrate() -> None:
-    """Cross-service migration tools."""
+def tidal() -> None:
+    """Tidal ↔ API commands (pull / push)."""
 
 
-@migrate.command("spotify-to-tidal")
-def spotify_to_tidal() -> None:
-    """Migrate playlists from Spotify to Tidal."""
+@tidal.command()
+def pull() -> None:
+    """Pull your entire Tidal library and save to disk."""
+    click.echo("Not yet implemented – Tidal adapter coming soon.")
+
+
+@tidal.command()
+def push() -> None:
+    """Push local library to Tidal."""
     click.echo("Not yet implemented – Tidal adapter coming soon.")
 
 
