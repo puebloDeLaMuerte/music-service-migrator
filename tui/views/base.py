@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 
 from textual.app import ComposeResult
-from textual.containers import Container
-from textual.widgets import RichLog
+from textual.containers import Container, Vertical
+from textual.widgets import RichLog, Static
 
 from tui.app import LogBridge
 
@@ -28,11 +28,26 @@ class LogView(BaseView):
 
     DEFAULT_CSS = """
     LogView { height: 1fr; width: 1fr; }
+    LogView > Vertical { height: 1fr; }
+    .log-col-title {
+        padding: 0 1;
+        height: 1;
+        text-style: bold;
+        color: $text;
+        background: $surface;
+    }
+    .log-col-gap {
+        height: 1;
+        background: $surface;
+    }
     #view-log { height: 1fr; }
     """
 
     def compose(self) -> ComposeResult:
-        yield RichLog(highlight=True, markup=True, id="view-log")
+        with Vertical():
+            yield Static("Log", classes="log-col-title")
+            yield Static("", classes="log-col-gap")
+            yield RichLog(highlight=True, markup=True, id="view-log")
 
     def _start_task(self) -> None:
         self.run_worker(self._do_task(), group="log-task")

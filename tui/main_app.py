@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal
-from textual.widgets import Footer, Label, ListItem, ListView
+from textual.containers import Container, Horizontal, Vertical
+from textual.widgets import Footer, Label, ListItem, ListView, Static
 
 from tui.app import APP_THEME, APP_TITLE, AppBanner
 from tui.views import MENU, create_view
@@ -50,6 +50,20 @@ class NavSidebar(Container):
         width: 24;
         border-right: solid $primary-background-lighten-2;
     }
+    NavSidebar > Vertical {
+        height: 1fr;
+    }
+    #nav-col-title {
+        padding: 0 1;
+        height: 1;
+        text-style: bold;
+        color: $text;
+        background: $surface;
+    }
+    #nav-col-gap {
+        height: 1;
+        background: $surface;
+    }
     #nav-list { height: 1fr; }
     .nav-header { color: $text-muted; height: 1; }
     .nav-header:hover { background: transparent; }
@@ -60,8 +74,11 @@ class NavSidebar(Container):
     """
 
     def compose(self) -> ComposeResult:
-        items = [NavItem(label, view_id) for label, view_id in MENU]
-        yield ListView(*items, id="nav-list")
+        with Vertical():
+            yield Static("Menu", id="nav-col-title")
+            yield Static("", id="nav-col-gap")
+            items = [NavItem(label, view_id) for label, view_id in MENU]
+            yield ListView(*items, id="nav-list")
 
     def highlight_active(self, view_id: str) -> None:
         nav_list = self.query_one("#nav-list", ListView)

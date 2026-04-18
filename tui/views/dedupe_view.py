@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Label, ListItem, ListView, Static
 
 from tui.views.base import BaseView
@@ -15,6 +15,18 @@ class DedupeView(BaseView):
     DEFAULT_CSS = """
     DedupeView { height: 1fr; width: 1fr; }
     #dedupe-main { height: 1fr; }
+    #dedupe-main > Vertical { height: 1fr; }
+    .dedupe-col-title {
+        padding: 0 1;
+        height: 1;
+        text-style: bold;
+        color: $text;
+        background: $surface;
+    }
+    .dedupe-col-gap {
+        height: 1;
+        background: $surface;
+    }
     #dedupe-status {
         dock: bottom;
         height: 1;
@@ -22,27 +34,35 @@ class DedupeView(BaseView):
         color: $text-muted;
         padding: 0 1;
     }
-    #dedupe-actions {
+    #dedupe-col-actions {
         width: 22;
         border-right: solid $primary-background-lighten-2;
     }
-    #table { width: 1fr; }
+    #dedupe-col-actions #dedupe-actions { height: 1fr; }
+    #dedupe-col-table { width: 1fr; }
+    #dedupe-col-table #table { height: 1fr; }
     """
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="dedupe-main"):
-            yield ListView(
-                ListItem(Label("  Remove older")),
-                ListItem(Label("  Keep in…")),
-                ListItem(Label("  Ignore")),
-                id="dedupe-actions",
-            )
-            yield DataTable(id="table")
+            with Vertical(id="dedupe-col-actions"):
+                yield Static("Actions", classes="dedupe-col-title")
+                yield Static("", classes="dedupe-col-gap")
+                yield ListView(
+                    ListItem(Label("  Remove older")),
+                    ListItem(Label("  Keep in…")),
+                    ListItem(Label("  Ignore")),
+                    id="dedupe-actions",
+                )
+            with Vertical(id="dedupe-col-table"):
+                yield Static("Duplicates", classes="dedupe-col-title")
+                yield Static("", classes="dedupe-col-gap")
+                yield DataTable(id="table")
         yield Static("Loading…", id="dedupe-status")
 
     def on_mount(self) -> None:
         table = self.query_one("#table", DataTable)
-        table.add_columns("Track", "Artists", "Playlists", "Positions")
+        table.add_columns("Playlists", "Track", "Artists", "Positions")
         table.cursor_type = "cell"
         self.run_worker(self._do_task(), group="dedupe-task")
 
@@ -116,7 +136,7 @@ class DedupeView(BaseView):
         for d in dupes:
             pl_names = ", ".join(sorted({name for name, _ in d.occurrences}))
             positions = ", ".join(f"{name} #{pos}" for name, pos in d.occurrences)
-            table.add_row(d.track_name, d.artists, pl_names, positions)
+            table.add_row(pl_names, d.track_name, d.artists, positions)
 
         self.query_one("#dedupe-status", Static).update(
             f"{len(dupes)} duplicate(s) found  ·  ↑↓ rows  ←→ columns  ·  "

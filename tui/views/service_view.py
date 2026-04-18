@@ -9,7 +9,7 @@ import asyncio
 import logging
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Label, ListItem, ListView, RichLog, Static
 
 from tui.app import LogBridge
@@ -20,18 +20,36 @@ class ServiceView(BaseView):
     DEFAULT_CSS = """
     ServiceView { height: 1fr; width: 1fr; }
     #svc-main { height: 1fr; }
-    #svc-menu {
+    #svc-main > Vertical { height: 1fr; }
+    .svc-col-title {
+        padding: 0 1;
+        height: 1;
+        text-style: bold;
+        color: $text;
+    }
+    .svc-col-gap { height: 1; }
+    #svc-col-menu .svc-col-title,
+    #svc-col-menu .svc-col-gap {
+        background: $surface;
+    }
+    #svc-col-right .svc-col-title,
+    #svc-col-right .svc-col-gap {
+        background: $background;
+    }
+    #svc-col-menu {
         width: 22;
         border-right: solid $primary-background-lighten-2;
     }
+    #svc-col-menu #svc-menu { height: 1fr; }
+    #svc-col-right { width: 1fr; }
     #svc-detail {
-        width: 1fr;
         padding: 1 2;
         overflow-y: auto;
+        height: 1fr;
     }
     #svc-log {
-        width: 1fr;
         display: none;
+        height: 1fr;
     }
     #svc-log.visible { display: block; }
     #svc-status {
@@ -51,13 +69,19 @@ class ServiceView(BaseView):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="svc-main"):
-            yield ListView(
-                ListItem(Label("  Pull Now")),
-                ListItem(Label("  Push Now")),
-                id="svc-menu",
-            )
-            yield Static("", id="svc-detail", markup=True)
-            yield RichLog(highlight=True, markup=True, id="svc-log")
+            with Vertical(id="svc-col-menu"):
+                yield Static("Actions", classes="svc-col-title")
+                yield Static("", classes="svc-col-gap")
+                yield ListView(
+                    ListItem(Label("  Pull Now")),
+                    ListItem(Label("  Push Now")),
+                    id="svc-menu",
+                )
+            with Vertical(id="svc-col-right"):
+                yield Static("Details", id="svc-pane-title", classes="svc-col-title")
+                yield Static("", classes="svc-col-gap")
+                yield Static("", id="svc-detail", markup=True)
+                yield RichLog(highlight=True, markup=True, id="svc-log")
         yield Static("", id="svc-status")
 
     def on_mount(self) -> None:
@@ -157,6 +181,7 @@ class ServiceView(BaseView):
     def _switch_to_log(self) -> None:
         self._op_active = True
         self.query_one("#svc-detail").styles.display = "none"
+        self.query_one("#svc-pane-title", Static).update("Log")
         log = self.query_one("#svc-log", RichLog)
         log.add_class("visible")
         self._update_status()

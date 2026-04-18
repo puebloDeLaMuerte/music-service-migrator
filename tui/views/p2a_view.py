@@ -130,17 +130,48 @@ class P2AView(BaseView):
     DEFAULT_CSS = """
     P2AView { height: 1fr; width: 1fr; }
     #p2a-main { height: 1fr; }
-    #playlist-list {
+    #p2a-main > Vertical {
+        height: 1fr;
+    }
+    .p2a-col-title {
+        padding: 0 1;
+        height: 1;
+        text-style: bold;
+        color: $text;
+    }
+    .p2a-col-gap {
+        height: 1;
+    }
+    #p2a-col-playlists .p2a-col-title,
+    #p2a-col-playlists .p2a-col-gap,
+    #p2a-col-actions .p2a-col-title,
+    #p2a-col-actions .p2a-col-gap {
+        background: $surface;
+    }
+    #p2a-col-detail .p2a-col-title,
+    #p2a-col-detail .p2a-col-gap {
+        background: $background;
+    }
+    #p2a-col-playlists {
         width: 1fr;
         min-width: 28;
         border-right: solid $primary-background-lighten-2;
     }
-    #p2a-actions {
+    #p2a-col-playlists #playlist-list {
+        height: 1fr;
+    }
+    #p2a-col-actions {
         width: 24;
         border-right: solid $primary-background-lighten-2;
     }
-    #detail {
+    #p2a-col-actions #p2a-actions {
+        height: 1fr;
+    }
+    #p2a-col-detail {
         width: 2fr;
+    }
+    #detail {
+        height: 1fr;
         padding: 1 2;
         overflow-y: auto;
     }
@@ -160,14 +191,23 @@ class P2AView(BaseView):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="p2a-main"):
-            yield ListView(id="playlist-list")
-            yield ListView(
-                ListItem(Label("  [d] Extract+delete")),
-                ListItem(Label("  [v] Extract+keep")),
-                ListItem(Label("  [n] Keep")),
-                id="p2a-actions",
-            )
-            yield Static("Loading…", id="detail", markup=True)
+            with Vertical(id="p2a-col-playlists"):
+                yield Static("Playlists", classes="p2a-col-title")
+                yield Static("", classes="p2a-col-gap")
+                yield ListView(id="playlist-list")
+            with Vertical(id="p2a-col-actions"):
+                yield Static("Actions", classes="p2a-col-title")
+                yield Static("", classes="p2a-col-gap")
+                yield ListView(
+                    ListItem(Label("  [d] Extract+delete")),
+                    ListItem(Label("  [v] Extract+keep")),
+                    ListItem(Label("  [n] Keep")),
+                    id="p2a-actions",
+                )
+            with Vertical(id="p2a-col-detail"):
+                yield Static("Details", classes="p2a-col-title")
+                yield Static("", classes="p2a-col-gap")
+                yield Static("Loading…", id="detail", markup=True)
         yield Static("Loading library…", id="p2a-status")
 
     def on_mount(self) -> None:
