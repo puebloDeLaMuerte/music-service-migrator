@@ -14,15 +14,15 @@ class ImagesView(LogView):
         self._start_task()
 
     async def run_task(self, log_widget: RichLog) -> None:
-        from common.store import load_library
+        from common.store import load_workspace
         from data.images import download_all_artwork
 
         log_widget.write("[bold]Loading stored Spotify library…[/]")
-        library = await asyncio.to_thread(load_library, "spotify")
+        library = await asyncio.to_thread(load_workspace)
 
         if not library.playlists:
             log_widget.write(
-                "[yellow]No playlists found. Run 'spotify pull' first.[/]"
+                "[yellow]No playlists found. Run Spotify → Pull first.[/]"
             )
             return
 

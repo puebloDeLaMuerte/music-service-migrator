@@ -1,4 +1,4 @@
-"""Apply duplicate resolutions to the on-disk Spotify library and persist ignore list."""
+"""Apply duplicate resolutions to the on-disk workspace library and persist ignore list."""
 
 from __future__ import annotations
 
@@ -6,15 +6,12 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from common import config
 from common.log import get_logger
 from common.models import Library, Playlist, PlaylistTrack
-from common.store import load_library, save_playlist
+from common.store import load_workspace, meta_dir, save_playlist
 from spotify.dedupe import Duplicate, duplicate_fingerprint, find_duplicates_across, playlist_track_key
 
 log = get_logger(__name__)
-
-SERVICE = "spotify"
 
 
 def _dt_sort_key(dt: datetime | None) -> float:
@@ -27,7 +24,7 @@ def _dt_sort_key(dt: datetime | None) -> float:
 
 
 def _ignored_path() -> Path:
-    p = config.output_dir() / SERVICE / "dedupe_ignored.json"
+    p = meta_dir() / "dedupe_ignored.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -211,11 +208,11 @@ def persist_playlists(library: Library, names: list[str]) -> None:
     for name in names:
         pl = _find_playlist(library, name)
         if pl:
-            save_playlist(pl, SERVICE)
+            save_playlist(pl)
 
 
 def reload_and_find_dupes() -> tuple[Library, list[Duplicate]]:
-    library = load_library(SERVICE)
+    library = load_workspace()
     dupes = find_duplicates_across(library.playlists)
     dupes = filter_dupes(dupes, load_ignored_keys())
     return library, dupes

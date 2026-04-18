@@ -284,9 +284,9 @@ class DedupeView(BaseView):
 
     async def _wk_keep_in(self, d: Duplicate, keep_name: str) -> None:
         def work():
-            from common.store import load_library
+            from common.store import load_workspace
 
-            lib = load_library("spotify")
+            lib = load_workspace()
             return finalize_keep_only_in(lib, d, keep_name)
 
         try:
@@ -316,9 +316,9 @@ class DedupeView(BaseView):
 
     async def _wk_remove_from(self, d: Duplicate, remove_name: str) -> None:
         def work():
-            from common.store import load_library
+            from common.store import load_workspace
 
-            lib = load_library("spotify")
+            lib = load_workspace()
             changed = apply_remove_from_playlist(lib, d, remove_name)
             persist_playlists(lib, changed)
 
@@ -335,9 +335,9 @@ class DedupeView(BaseView):
 
     async def _wk_describe_older(self, d: Duplicate) -> None:
         def desc():
-            from common.store import load_library
+            from common.store import load_workspace
 
-            lib = load_library("spotify")
+            lib = load_workspace()
             return describe_keep_older(lib, d)
 
         try:
@@ -356,9 +356,9 @@ class DedupeView(BaseView):
 
     async def _wk_describe_newer(self, d: Duplicate) -> None:
         def desc():
-            from common.store import load_library
+            from common.store import load_workspace
 
-            lib = load_library("spotify")
+            lib = load_workspace()
             return describe_keep_newer(lib, d)
 
         try:
@@ -386,9 +386,9 @@ class DedupeView(BaseView):
         _ = older
 
         def work():
-            from common.store import load_library
+            from common.store import load_workspace
 
-            lib = load_library("spotify")
+            lib = load_workspace()
             return finalize_keep_only_in(lib, d, keep_pl)
 
         try:
@@ -462,7 +462,7 @@ class DedupeView(BaseView):
             _, dupes = await asyncio.to_thread(reload_and_find_dupes)
         except FileNotFoundError:
             self._status_line.set_baseline(
-                "No library on disk. Run 'spotify pull' first."
+                "No workspace on disk. Run Spotify → Pull first."
             )
             return
         except Exception as exc:

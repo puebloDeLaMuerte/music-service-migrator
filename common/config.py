@@ -2,6 +2,8 @@
 
 Reads the .env file at the project root once and exposes helpers that each
 service adapter can call to pull only the keys it needs.
+
+Workspace data lives under :func:`work_dir` (env ``WORK_DIR``, default ``./work``).
 """
 
 from __future__ import annotations
@@ -55,8 +57,20 @@ def require(key: str) -> str:
     return value
 
 
-def output_dir() -> Path:
-    path = Path(get("OUTPUT_DIR", "./output"))
+def work_dir() -> Path:
+    """Root directory for all on-disk workspace data (playlists, meta, …).
+
+    Layout under this path (see module docstring in ``common.store``):
+
+    - ``playlists/*.json`` — one file per playlist
+    - ``liked_songs.json``, ``saved_albums.json``, ``followed_artists.json``
+    - ``workspace_meta.json`` — schema version, counts, ``last_pull_provider``
+    - ``meta/`` — dedupe ignore list, P2A log, image cache, …
+
+    Set env ``WORK_DIR`` (default ``./work``). Relative paths are under the
+    project root.
+    """
+    path = Path(get("WORK_DIR", "./work"))
     if not path.is_absolute():
         path = _PROJECT_ROOT / path
     path.mkdir(parents=True, exist_ok=True)

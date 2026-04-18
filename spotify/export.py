@@ -13,8 +13,10 @@ from common.models import (
     Library,
     Playlist,
     PlaylistTrack,
+    RecordMeta,
     SavedAlbum,
     Track,
+    record_meta_for_pull,
 )
 from spotify.client import get_client
 
@@ -92,7 +94,9 @@ def _parse_track(t: dict) -> Track:
     )
 
 
-def _parse_playlist_track_item(wrapper: dict) -> PlaylistTrack | None:
+def _parse_playlist_track_item(
+    wrapper: dict, record_meta: RecordMeta
+) -> PlaylistTrack | None:
     """Parse a playlist item wrapper. Handles both spotipy <2.26 and >=2.26."""
     t = wrapper.get("item") or wrapper.get("track")
     if t is None:
@@ -102,12 +106,15 @@ def _parse_playlist_track_item(wrapper: dict) -> PlaylistTrack | None:
 
     return PlaylistTrack(
         track=_parse_track(t),
+        record_meta=record_meta,
         added_at=_parse_dt(wrapper.get("added_at")),
         added_by=(wrapper.get("added_by") or {}).get("id"),
     )
 
 
-def _parse_saved_track_item(wrapper: dict) -> PlaylistTrack | None:
+def _parse_saved_track_item(
+    wrapper: dict, record_meta: RecordMeta
+) -> PlaylistTrack | None:
     """Parse a saved-track wrapper (liked songs endpoint)."""
     t = wrapper.get("track")
     if t is None:
@@ -115,6 +122,7 @@ def _parse_saved_track_item(wrapper: dict) -> PlaylistTrack | None:
 
     return PlaylistTrack(
         track=_parse_track(t),
+        record_meta=record_meta,
         added_at=_parse_dt(wrapper.get("added_at")),
     )
 
@@ -136,6 +144,7 @@ def _paginate(first_page, sp) -> list[dict]:
 
 def fetch_playlist_tracks(playlist_id: str) -> list[PlaylistTrack]:
     sp = get_client()
+    row_meta = record_meta_for_pull(SERVICE)
     items = _paginate(
         sp.playlist_items(playlist_id, limit=100, market="from_token",
                           additional_types=("track",)),
@@ -143,7 +152,7 @@ def fetch_playlist_tracks(playlist_id: str) -> list[PlaylistTrack]:
     )
     tracks: list[PlaylistTrack] = []
     for pos, wrapper in enumerate(items):
-        pt = _parse_playlist_track_item(wrapper)
+        pt = _parse_playlist_track_item(wrapper, row_meta)
         if pt is not None:
             pt.position = pos
             tracks.append(pt)
@@ -172,6 +181,7 @@ def fetch_all_playlists() -> list[Playlist]:
         playlists.append(
             Playlist(
                 name=item["name"],
+                record_meta=record_meta_for_pull(SERVICE),
                 description=item.get("description"),
                 owner=(item.get("owner") or {}).get("display_name"),
                 collaborative=item.get("collaborative"),
@@ -191,10 +201,11 @@ def fetch_all_playlists() -> list[Playlist]:
 
 def fetch_liked_songs() -> list[PlaylistTrack]:
     sp = get_client()
+    row_meta = record_meta_for_pull(SERVICE)
     items = _paginate(sp.current_user_saved_tracks(limit=50), sp)
     tracks: list[PlaylistTrack] = []
     for pos, wrapper in enumerate(items):
-        pt = _parse_saved_track_item(wrapper)
+        pt = _parse_saved_track_item(wrapper, row_meta)
         if pt is not None:
             pt.position = pos
             tracks.append(pt)
@@ -232,10 +243,13 @@ def fetch_saved_albums() -> list[SavedAlbum]:
             album.tracks = [
                 _parse_album_track(t) for t in _paginate(raw_tracks, sp)
             ]
-        albums.append(SavedAlbum(
-            album=album,
-            saved_at=_parse_dt(item.get("added_at")),
-        ))
+        albums.append(
+            SavedAlbum(
+                album=album,
+                record_meta=record_meta_for_pull(SERVICE),
+                saved_at=_parse_dt(item.get("added_at")),
+            )
+        )
     log.info("Fetched %d saved albums", len(albums))
     return albums
 
@@ -246,9 +260,12 @@ def fetch_followed_artists() -> list[FollowedArtist]:
     result = sp.current_user_followed_artists(limit=50)
     while True:
         for item in result["artists"]["items"]:
-            artists.append(FollowedArtist(
-                artist=_parse_artist(item),
-            ))
+            artists.append(
+                FollowedArtist(
+                    artist=_parse_artist(item),
+                    record_meta=record_meta_for_pull(SERVICE),
+                )
+            )
         after = result["artists"]["cursors"]["after"] if result["artists"]["cursors"] else None
         if after:
             result = sp.current_user_followed_artists(limit=50, after=after)
@@ -264,7 +281,7 @@ def fetch_library() -> Library:
     """Pull the user's entire Spotify library."""
     log.info("Starting full library export from Spotify…")
     return Library(
-        service=SERVICE,
+        last_pull_provider=SERVICE,
         exported_at=datetime.now(timezone.utc),
         playlists=fetch_all_playlists(),
         liked_songs=fetch_liked_songs(),

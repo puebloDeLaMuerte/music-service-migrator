@@ -8,14 +8,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
-
-from common import config
 from common.log import get_logger
-from common.models import Album, Playlist, PlaylistTrack, SavedAlbum
+from common.models import Album, Playlist, PlaylistTrack, SavedAlbum, record_meta_for_app
 from common.store import (
     append_saved_albums,
     delete_playlist,
+    meta_dir,
     save_playlist,
 )
 from spotify.album_detect import AlbumGroup
@@ -34,6 +32,7 @@ def build_trimmed_playlist(playlist: Playlist, album_groups: list[AlbumGroup]) -
         if pt.track.service_id not in remove_ids:
             pt_copy = PlaylistTrack(
                 track=pt.track,
+                record_meta=pt.record_meta,
                 position=len(kept),
                 added_at=pt.added_at,
                 added_by=pt.added_by,
@@ -42,6 +41,7 @@ def build_trimmed_playlist(playlist: Playlist, album_groups: list[AlbumGroup]) -
 
     return Playlist(
         name=playlist.name,
+        record_meta=playlist.record_meta,
         description=playlist.description,
         owner=playlist.owner,
         collaborative=playlist.collaborative,
@@ -92,8 +92,8 @@ def _album_from_playlist_tracks(
     return album
 
 
-def _append_log(service: str, entry: dict) -> None:
-    log_path = config.output_dir() / service / "playlist2album_log.json"
+def _append_log(entry: dict) -> None:
+    log_path = meta_dir() / "playlist2album_log.json"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     if log_path.exists():
         data = json.loads(log_path.read_text(encoding="utf-8"))
@@ -128,7 +128,6 @@ def apply_extract_once(
     *,
     remove_from_playlist: bool,
     keep_remaining_in_playlist_file: bool = True,
-    service: str = "spotify",
 ) -> ApplyExtractResult:
     """Save album(s) to saved_albums; optionally remove their tracks from the playlist file.
 
@@ -140,20 +139,21 @@ def apply_extract_once(
         keep_remaining_in_playlist_file: When True, save trimmed playlist if tracks remain;
             when False, delete the playlist file even if tracks would remain (user chose
             "discard" in leftovers flow).
-        service: Output service folder name.
     """
     if not album_groups:
         raise ValueError("album_groups must not be empty")
 
     now = datetime.now(timezone.utc)
+    app_meta = record_meta_for_app(origin="created", when=now)
     albums_to_save = [
         SavedAlbum(
             album=_album_from_playlist_tracks(playlist, ag),
+            record_meta=app_meta,
             saved_at=now,
         )
         for ag in album_groups
     ]
-    added = append_saved_albums(albums_to_save, service)
+    added = append_saved_albums(albums_to_save)
 
     playlist_modified = False
     playlist_deleted = False
@@ -165,7 +165,7 @@ def apply_extract_once(
             "albums_added_to_library": added,
             "playlist_outcome": "unchanged (extract+keep)",
         }
-        _append_log(service, {"at": now.isoformat(), **detail})
+        _append_log({"at": now.isoformat(), **detail})
         return ApplyExtractResult(
             albums_added=added,
             playlist_modified=False,
@@ -176,15 +176,15 @@ def apply_extract_once(
     trimmed = build_trimmed_playlist(playlist, album_groups)
 
     if trimmed.track_count == 0:
-        delete_playlist(playlist.name, service)
+        delete_playlist(playlist.name)
         playlist_deleted = True
         outcome = "deleted (empty after trim)"
     elif keep_remaining_in_playlist_file:
-        save_playlist(trimmed, service)
+        save_playlist(trimmed)
         playlist_modified = True
         outcome = f"trimmed to {trimmed.track_count} tracks"
     else:
-        delete_playlist(playlist.name, service)
+        delete_playlist(playlist.name)
         playlist_deleted = True
         outcome = "deleted (discarded remaining tracks)"
 
@@ -194,7 +194,7 @@ def apply_extract_once(
         "albums_added_to_library": added,
         "playlist_outcome": outcome,
     }
-    _append_log(service, {"at": now.isoformat(), **detail})
+    _append_log({"at": now.isoformat(), **detail})
 
     return ApplyExtractResult(
         albums_added=added,

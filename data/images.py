@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from urllib.request import urlopen, Request
+from urllib.request import Request, urlopen
 
 from common import config
 from common.log import get_logger
-from common.models import Library, Playlist, Image
+from common.models import Image, Library, Playlist
 from common.store import sanitise_filename
 
 log = get_logger(__name__)
@@ -70,21 +70,21 @@ def _download(url: str, dest: Path) -> Path:
 
 def download_playlist_artwork(
     playlist: Playlist,
-    service_dir: Path | None = None,
+    workspace_root: Path | None = None,
 ) -> Path | None:
     """Download the best artwork for a single playlist.
 
-    Saves to: <service_dir>/playlists/<name>_data/artwork.<ext>
+    Saves to: ``<work_dir>/playlists/<name>_data/artwork.<ext>``
     Returns the path on success, None if no image available.
     """
     img = _best_image(playlist.images)
     if img is None:
         return None
 
-    if service_dir is None:
-        service_dir = config.output_dir() / (playlist.service or "unknown")
+    if workspace_root is None:
+        workspace_root = config.work_dir()
 
-    folder = service_dir / "playlists" / (sanitise_filename(playlist.name) + "_data")
+    folder = workspace_root / "playlists" / (sanitise_filename(playlist.name) + "_data")
     dest = folder / "artwork"
     final = _download(img.url, dest)
     log.info("Saved artwork for '%s' → %s", playlist.name, final)
@@ -96,12 +96,12 @@ def download_all_artwork(library: Library) -> tuple[int, int]:
 
     Returns (downloaded, skipped) counts.
     """
-    service_dir = config.output_dir() / library.service
+    workspace_root = config.work_dir()
     downloaded = 0
     skipped = 0
 
     for pl in library.playlists:
-        result = download_playlist_artwork(pl, service_dir=service_dir)
+        result = download_playlist_artwork(pl, workspace_root=workspace_root)
         if result:
             downloaded += 1
         else:

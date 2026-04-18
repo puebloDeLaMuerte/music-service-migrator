@@ -330,17 +330,17 @@ class P2AView(BaseView):
     # ── Data loading ──────────────────────────────────────────────
 
     async def _load_data(self) -> None:
-        from common.store import load_library
+        from common.store import load_workspace
         from spotify.album_detect import analyse_playlist
 
-        library = await asyncio.to_thread(load_library, "spotify")
+        library = await asyncio.to_thread(load_workspace)
 
         lv = self.query_one("#playlist-list", ListView)
         lv.clear()
 
         if not library.playlists:
             self.query_one("#detail", Static).update(
-                "[yellow]No playlists. Run 'spotify pull' first.[/]"
+                "[yellow]No playlists. Run Spotify → Pull first.[/]"
             )
             self._update_status()
             return
@@ -461,7 +461,6 @@ class P2AView(BaseView):
                 groups,
                 remove_from_playlist=False,
                 keep_remaining_in_playlist_file=True,
-                service="spotify",
             )
             self._status_line.set_baseline(
                 f"  Added {r.albums_added} album(s) to saved library (playlist unchanged)."
@@ -542,7 +541,6 @@ class P2AView(BaseView):
                 groups,
                 remove_from_playlist=True,
                 keep_remaining_in_playlist_file=keep_remaining_in_playlist_file,
-                service="spotify",
             )
             msg = f"  {r.detail.get('playlist_outcome', 'done')}"
             if r.albums_added:

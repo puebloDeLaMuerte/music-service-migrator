@@ -209,8 +209,8 @@ class ServiceView(BaseView):
         try:
             log_widget.write(f"[bold]Pulling full library from {self._title}…[/]\n")
 
-            from common.store import save_library
-            from spotify.export import fetch_library
+            from common.pull import apply_pull_result
+            from spotify.export import SERVICE, fetch_library
 
             library = await asyncio.to_thread(fetch_library)
 
@@ -222,7 +222,7 @@ class ServiceView(BaseView):
                 f"[bold green]{len(library.followed_artists)}[/] followed artists"
             )
 
-            out = await asyncio.to_thread(save_library, library)
+            out = await asyncio.to_thread(apply_pull_result, SERVICE, library)
             log_widget.write(f"\n[bold]Library saved to {out}[/]")
             self.query_one("#svc-status", Static).update("  Pull complete.")
         except Exception as exc:

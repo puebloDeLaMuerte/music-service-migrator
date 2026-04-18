@@ -11,21 +11,19 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Label, ListItem, ListView, Static
 
 from common.models import Library
-from common.store import load_library, save_library_auxiliary_data
+from common.store import load_workspace, save_workspace_auxiliary
 from tui.transient_status import TransientStatus
 from tui.views.base import BaseView
 from tui.views.p2a_view import ConfirmModal
 
 ListKind = Literal["albums", "artists", "songs"]
 
-_SERVICE = "spotify"
-
 _KIND_META: dict[ListKind, dict] = {
     "albums": {
         "menu_title": "Saved albums",
         "table_title": "Albums",
         "columns": ("Album", "Artists"),
-        "empty": "No saved albums in the export. Run Spotify pull first.",
+        "empty": "No saved albums in the workspace. Run Spotify → Pull first.",
         "attr": "saved_albums",
         "label_fn": lambda sa: sa.album.name,
         "confirm_prefix": "Remove album",
@@ -41,7 +39,7 @@ _KIND_META: dict[ListKind, dict] = {
         "menu_title": "Saved artists",
         "table_title": "Artists",
         "columns": ("Artist",),
-        "empty": "No followed artists in the export. Run Spotify pull first.",
+        "empty": "No followed artists in the workspace. Run Spotify → Pull first.",
         "attr": "followed_artists",
         "label_fn": lambda fa: fa.artist.name,
         "confirm_prefix": "Remove artist",
@@ -51,7 +49,7 @@ _KIND_META: dict[ListKind, dict] = {
         "menu_title": "Saved songs",
         "table_title": "Songs",
         "columns": ("Track", "Artists", "Album"),
-        "empty": "No liked songs in the export. Run Spotify pull first.",
+        "empty": "No liked songs in the workspace. Run Spotify → Pull first.",
         "attr": "liked_songs",
         "label_fn": lambda pt: pt.track.name,
         "confirm_prefix": "Remove track",
@@ -157,12 +155,7 @@ class LocalLibraryListView(BaseView):
 
     async def _load_task(self) -> None:
         try:
-            lib = await asyncio.to_thread(load_library, _SERVICE)
-        except FileNotFoundError:
-            self._status.set_baseline(
-                "No library on disk. Run Spotify pull first."
-            )
-            return
+            lib = await asyncio.to_thread(load_workspace)
         except Exception as exc:
             self._status.set_baseline(f"Error: {exc}")
             return
@@ -273,11 +266,11 @@ class LocalLibraryListView(BaseView):
 
     async def _wk_remove(self, index: int) -> None:
         def work() -> Library:
-            lib = load_library(_SERVICE)
+            lib = load_workspace()
             if not (0 <= index < self._list_len(lib)):
                 raise IndexError("Row no longer valid; reload the view.")
             self._pop_at(lib, index)
-            save_library_auxiliary_data(lib)
+            save_workspace_auxiliary(lib)
             return lib
 
         try:

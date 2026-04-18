@@ -37,10 +37,11 @@ SETTINGS: tuple[_Setting, ...] = (
         "always keep the trimmed playlist file.",
     ),
     _Setting(
-        "OUTPUT_DIR",
-        "Output directory",
+        "WORK_DIR",
+        "Work directory",
         "string",
-        "Folder for exported library data (relative paths are under the project).",
+        "Root folder for workspace data: playlists, liked songs, meta, … "
+        "(relative paths are under the project).",
     ),
     _Setting(
         "LOG_LEVEL",
@@ -134,8 +135,8 @@ class SettingsView(BaseView):
         key = row.env_key
         if key == "TUI_STATUS_FLASH_SECONDS":
             return get(key, "5") or "5"
-        if key == "OUTPUT_DIR":
-            return get(key, "./output") or "./output"
+        if key == "WORK_DIR":
+            return get(key, "./work") or "./work"
         if key == "LOG_LEVEL":
             return get(key, "INFO") or "INFO"
         return get(key, "") or ""

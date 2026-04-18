@@ -39,6 +39,7 @@ htmlcov/
 
 # Output from tools
 output*/
+work/
 logs/
 playlists/
 
