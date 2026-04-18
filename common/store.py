@@ -309,6 +309,45 @@ def save_library(library: Library) -> Path:
     return sdir
 
 
+def save_library_auxiliary_data(library: Library) -> None:
+    """Write liked songs, saved albums, followed artists, and export_meta only.
+
+    Does not create or update playlist files under ``playlists/``. Use after
+    mutating those lists in memory (e.g. removing an entry from the TUI).
+    """
+    sdir = _service_dir(library.service)
+    _write_json(
+        sdir / "liked_songs.json",
+        [_playlist_track_to_dict(pt) for pt in library.liked_songs],
+    )
+    _write_json(
+        sdir / "saved_albums.json",
+        [_saved_album_to_dict(sa) for sa in library.saved_albums],
+    )
+    _write_json(
+        sdir / "followed_artists.json",
+        [_followed_artist_to_dict(fa) for fa in library.followed_artists],
+    )
+    _write_json(
+        sdir / "export_meta.json",
+        {
+            "service": library.service,
+            "exported_at": _dt_to_str(library.exported_at),
+            "playlist_count": len(library.playlists),
+            "liked_song_count": len(library.liked_songs),
+            "saved_album_count": len(library.saved_albums),
+            "followed_artist_count": len(library.followed_artists),
+        },
+    )
+    log.info(
+        "Updated auxiliary library data: %d liked, %d albums, %d artists → %s",
+        len(library.liked_songs),
+        len(library.saved_albums),
+        len(library.followed_artists),
+        sdir,
+    )
+
+
 def save_playlist(playlist: Playlist, service: str) -> Path:
     """Write (or overwrite) a single playlist JSON on disk."""
     sdir = _service_dir(service)

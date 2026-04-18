@@ -15,6 +15,9 @@ MENU: list[tuple[str, str]] = [
     ("Local Data", ""),
     ("Dedupe", "data-dedupe"),
     ("Playlist→Album", "data-p2a"),
+    ("Saved albums", "data-saved-albums"),
+    ("Saved artists", "data-saved-artists"),
+    ("Saved songs", "data-saved-songs"),
     ("Images", "data-images"),
     ("", "---"),
     ("About", "about"),
@@ -29,6 +32,11 @@ def create_view(view_id: str, **kwargs):
     from tui.views.dedupe_view import DedupeView
     from tui.views.settings_view import SettingsView
     from tui.views.images_view import ImagesView
+    from tui.views.local_library_list_view import (
+        saved_albums_view,
+        saved_artists_view,
+        saved_songs_view,
+    )
     from tui.views.p2a_view import P2AView
     from tui.views.service_view import ServiceView
     from tui.views.stub_view import StubView
@@ -41,6 +49,12 @@ def create_view(view_id: str, **kwargs):
         return DedupeView()
     if view_id == "data-p2a":
         return P2AView(playlist_filter=kwargs.get("playlist_filter"))
+    if view_id == "data-saved-albums":
+        return saved_albums_view()
+    if view_id == "data-saved-artists":
+        return saved_artists_view()
+    if view_id == "data-saved-songs":
+        return saved_songs_view()
     if view_id == "data-images":
         return ImagesView()
     if view_id == "about":
