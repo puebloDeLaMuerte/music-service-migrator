@@ -1,0 +1,3 @@
+[submodule "lib/my-spotify-playlists-downloader"]
+	path = lib/my-spotify-playlists-downloader
+	url = https://github.com/novama/my-spotify-playlists-downloader.git

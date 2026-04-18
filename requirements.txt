@@ -1,0 +1,8 @@
+# Spotify
+spotipy==2.25.1
+
+# Config
+python-dotenv>=1.1.1
+
+# CLI
+click>=8.1
