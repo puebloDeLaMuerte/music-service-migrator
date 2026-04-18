@@ -1,4 +1,4 @@
-"""TUI screen for 'data playlistimages'."""
+"""Images view — downloads playlist artwork."""
 
 from __future__ import annotations
 
@@ -6,12 +6,12 @@ import asyncio
 
 from textual.widgets import RichLog
 
-from tui.app import LogScreen
+from tui.views.base import LogView
 
 
-class ImagesApp(LogScreen):
-    def __init__(self) -> None:
-        super().__init__(title="playlist images")
+class ImagesView(LogView):
+    def on_mount(self) -> None:
+        self._start_task()
 
     async def run_task(self, log_widget: RichLog) -> None:
         from common.store import load_library
@@ -21,7 +21,9 @@ class ImagesApp(LogScreen):
         library = await asyncio.to_thread(load_library, "spotify")
 
         if not library.playlists:
-            log_widget.write("[red]No playlists found. Run 'spotify pull' first.[/]")
+            log_widget.write(
+                "[yellow]No playlists found. Run 'spotify pull' first.[/]"
+            )
             return
 
         log_widget.write(
@@ -33,4 +35,3 @@ class ImagesApp(LogScreen):
             f"[bold green]{downloaded}[/] downloaded, "
             f"[yellow]{skipped}[/] skipped (no artwork)."
         )
-        log_widget.write("\n[dim]Press [bold]q[/bold] to quit.[/]")

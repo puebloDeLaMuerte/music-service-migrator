@@ -1,13 +1,14 @@
 """music-service-migrator – unified CLI entry point.
 
 Usage:
+    python cli.py                             (launches full TUI)
     python cli.py spotify pull
-    python cli.py spotify push              (future)
+    python cli.py spotify push                (future)
     python cli.py data dedupe
-    python cli.py data playlist2album
+    python cli.py data playlist2album [-p NAME]
     python cli.py data playlistimages
-    python cli.py tidal pull                (future)
-    python cli.py tidal push                (future)
+    python cli.py tidal pull                  (future)
+    python cli.py tidal push                  (future)
 """
 
 from __future__ import annotations
@@ -15,6 +16,12 @@ from __future__ import annotations
 import sys
 
 import click
+
+
+def _launch(initial: str = "svc-spotify", **kwargs) -> None:
+    from tui.main_app import MigratorApp
+
+    MigratorApp(initial=initial, **kwargs).run()
 
 
 def _handle_spotify_errors(func):
@@ -36,9 +43,12 @@ def _handle_spotify_errors(func):
     return wrapper
 
 
-@click.group()
-def main() -> None:
+@click.group(invoke_without_command=True)
+@click.pass_context
+def main(ctx) -> None:
     """Music service migrator & playlist management toolkit."""
+    if ctx.invoked_subcommand is None:
+        _launch()
 
 
 # ── Spotify sub-commands ─────────────────────────────────────────────────────
@@ -53,18 +63,14 @@ def spotify() -> None:
 @_handle_spotify_errors
 def pull() -> None:
     """Pull your entire Spotify library and save to disk."""
-    from tui.pull_screen import PullApp
-
-    PullApp().run()
+    _launch("svc-spotify")
 
 
 @spotify.command()
 @_handle_spotify_errors
 def push() -> None:
     """Push local changes back to Spotify."""
-    from tui.stub_screen import StubApp
-
-    StubApp("spotify push").run()
+    _launch("svc-spotify")
 
 
 # ── Data sub-commands (operate on stored data) ───────────────────────────────
@@ -78,29 +84,25 @@ def data() -> None:
 @data.command()
 def dedupe() -> None:
     """Find duplicate tracks within and across playlists."""
-    from tui.dedupe_screen import DedupeApp
-
-    DedupeApp().run()
+    _launch("data-dedupe")
 
 
 @data.command()
 @click.option(
-    "--playlist", "-p", default=None,
+    "--playlist",
+    "-p",
+    default=None,
     help="Name (or substring) of a single playlist to analyse.",
 )
 def playlist2album(playlist: str | None) -> None:
     """Detect albums embedded in playlists and optionally extract them."""
-    from tui.p2a_screen import P2AApp
-
-    P2AApp(playlist_filter=playlist).run()
+    _launch("data-p2a", playlist_filter=playlist)
 
 
 @data.command()
 def playlistimages() -> None:
     """Download playlist artwork at the highest available resolution."""
-    from tui.images_screen import ImagesApp
-
-    ImagesApp().run()
+    _launch("data-images")
 
 
 # ── Tidal sub-commands (future) ──────────────────────────────────────────────
@@ -114,17 +116,13 @@ def tidal() -> None:
 @tidal.command()
 def pull() -> None:
     """Pull your entire Tidal library and save to disk."""
-    from tui.stub_screen import StubApp
-
-    StubApp("tidal pull").run()
+    _launch("svc-tidal")
 
 
 @tidal.command()
 def push() -> None:
     """Push local library to Tidal."""
-    from tui.stub_screen import StubApp
-
-    StubApp("tidal push").run()
+    _launch("svc-tidal")
 
 
 if __name__ == "__main__":
