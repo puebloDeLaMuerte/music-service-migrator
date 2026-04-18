@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
@@ -26,6 +25,7 @@ from common.models import (
     Album,
     Artist,
     FollowedArtist,
+    Image,
     Library,
     Playlist,
     PlaylistTrack,
@@ -39,7 +39,6 @@ log = get_logger(__name__)
 def _sanitise_filename(name: str) -> str:
     """Turn a playlist name into a safe, readable filename stem."""
     name = unicodedata.normalize("NFC", name)
-    # strip emoji and other symbol characters
     name = re.sub(r"[^\w\s\-]", "", name, flags=re.UNICODE)
     name = name.strip().replace(" ", "_")
     return name or "unnamed"
@@ -62,24 +61,42 @@ def _dt_from_str(s: str | None) -> datetime | None:
         return None
 
 
-# ── Serialisation helpers ────────────────────────────────────────────────────
+# ── Serialisation ────────────────────────────────────────────────────────────
+
+def _image_to_dict(img: Image) -> dict:
+    return {"url": img.url, "height": img.height, "width": img.width}
+
 
 def _artist_to_dict(a: Artist) -> dict:
-    return asdict(a)
+    return {
+        "name": a.name,
+        "genres": a.genres,
+        "images": [_image_to_dict(i) for i in a.images],
+        "service_id": a.service_id,
+        "service_url": a.service_url,
+        "uri": a.uri,
+        "service": a.service,
+    }
 
 
 def _album_to_dict(a: Album) -> dict:
-    d = {
+    return {
         "name": a.name,
         "artists": [_artist_to_dict(ar) for ar in a.artists],
+        "album_type": a.album_type,
         "release_date": a.release_date,
+        "release_date_precision": a.release_date_precision,
         "total_tracks": a.total_tracks,
         "tracks": [_track_to_dict(t) for t in a.tracks],
+        "images": [_image_to_dict(i) for i in a.images],
+        "genres": a.genres,
+        "copyrights": a.copyrights,
+        "upc": a.upc,
         "service_id": a.service_id,
         "service_url": a.service_url,
+        "uri": a.uri,
         "service": a.service,
     }
-    return d
 
 
 def _track_to_dict(t: Track) -> dict:
@@ -87,10 +104,15 @@ def _track_to_dict(t: Track) -> dict:
         "name": t.name,
         "artists": [_artist_to_dict(a) for a in t.artists],
         "album": _album_to_dict(t.album) if t.album else None,
+        "track_number": t.track_number,
+        "disc_number": t.disc_number,
         "duration_ms": t.duration_ms,
+        "explicit": t.explicit,
+        "is_local": t.is_local,
         "isrc": t.isrc,
         "service_id": t.service_id,
         "service_url": t.service_url,
+        "uri": t.uri,
         "service": t.service,
     }
 
@@ -109,8 +131,13 @@ def _playlist_to_dict(p: Playlist) -> dict:
         "name": p.name,
         "description": p.description,
         "owner": p.owner,
+        "collaborative": p.collaborative,
+        "public": p.public,
+        "snapshot_id": p.snapshot_id,
+        "images": [_image_to_dict(i) for i in p.images],
         "service_id": p.service_id,
         "service_url": p.service_url,
+        "uri": p.uri,
         "service": p.service,
         "track_count": p.track_count,
         "tracks": [_playlist_track_to_dict(pt) for pt in p.tracks],
@@ -131,14 +158,20 @@ def _followed_artist_to_dict(fa: FollowedArtist) -> dict:
     }
 
 
-# ── Deserialisation helpers ──────────────────────────────────────────────────
+# ── Deserialisation ─────────────────────────────────────────────────────────
+
+def _image_from_dict(d: dict) -> Image:
+    return Image(url=d["url"], height=d.get("height"), width=d.get("width"))
+
 
 def _artist_from_dict(d: dict) -> Artist:
     return Artist(
         name=d["name"],
         genres=d.get("genres", []),
+        images=[_image_from_dict(i) for i in d.get("images", [])],
         service_id=d.get("service_id"),
         service_url=d.get("service_url"),
+        uri=d.get("uri"),
         service=d.get("service"),
     )
 
@@ -147,11 +180,18 @@ def _album_from_dict(d: dict) -> Album:
     return Album(
         name=d["name"],
         artists=[_artist_from_dict(a) for a in d.get("artists", [])],
+        album_type=d.get("album_type"),
         release_date=d.get("release_date"),
+        release_date_precision=d.get("release_date_precision"),
         total_tracks=d.get("total_tracks"),
         tracks=[_track_from_dict(t) for t in d.get("tracks", [])],
+        images=[_image_from_dict(i) for i in d.get("images", [])],
+        genres=d.get("genres", []),
+        copyrights=d.get("copyrights", []),
+        upc=d.get("upc"),
         service_id=d.get("service_id"),
         service_url=d.get("service_url"),
+        uri=d.get("uri"),
         service=d.get("service"),
     )
 
@@ -161,10 +201,15 @@ def _track_from_dict(d: dict) -> Track:
         name=d["name"],
         artists=[_artist_from_dict(a) for a in d.get("artists", [])],
         album=_album_from_dict(d["album"]) if d.get("album") else None,
+        track_number=d.get("track_number"),
+        disc_number=d.get("disc_number"),
         duration_ms=d.get("duration_ms"),
+        explicit=d.get("explicit"),
+        is_local=d.get("is_local"),
         isrc=d.get("isrc"),
         service_id=d.get("service_id"),
         service_url=d.get("service_url"),
+        uri=d.get("uri"),
         service=d.get("service"),
     )
 
@@ -183,9 +228,14 @@ def _playlist_from_dict(d: dict) -> Playlist:
         name=d["name"],
         description=d.get("description"),
         owner=d.get("owner"),
+        collaborative=d.get("collaborative"),
+        public=d.get("public"),
+        snapshot_id=d.get("snapshot_id"),
+        images=[_image_from_dict(i) for i in d.get("images", [])],
         tracks=[_playlist_track_from_dict(pt) for pt in d.get("tracks", [])],
         service_id=d.get("service_id"),
         service_url=d.get("service_url"),
+        uri=d.get("uri"),
         service=d.get("service"),
     )
 
@@ -216,34 +266,29 @@ def save_library(library: Library) -> Path:
     """Persist an entire Library to disk. Returns the service directory."""
     sdir = _service_dir(library.service)
 
-    # playlists — one file each
     pl_dir = sdir / "playlists"
     for pl in library.playlists:
         fname = _sanitise_filename(pl.name) + ".json"
         _write_json(pl_dir / fname, _playlist_to_dict(pl))
 
-    # liked songs
     if library.liked_songs:
         _write_json(
             sdir / "liked_songs.json",
             [_playlist_track_to_dict(pt) for pt in library.liked_songs],
         )
 
-    # saved albums
     if library.saved_albums:
         _write_json(
             sdir / "saved_albums.json",
             [_saved_album_to_dict(sa) for sa in library.saved_albums],
         )
 
-    # followed artists
     if library.followed_artists:
         _write_json(
             sdir / "followed_artists.json",
             [_followed_artist_to_dict(fa) for fa in library.followed_artists],
         )
 
-    # metadata
     _write_json(sdir / "export_meta.json", {
         "service": library.service,
         "exported_at": _dt_to_str(library.exported_at),
@@ -276,32 +321,27 @@ def load_library(service: str) -> Library:
     if not sdir.exists():
         raise FileNotFoundError(f"No exported data found at {sdir}")
 
-    # playlists
     playlists: list[Playlist] = []
     pl_dir = sdir / "playlists"
     if pl_dir.exists():
         for f in sorted(pl_dir.glob("*.json")):
             playlists.append(_playlist_from_dict(_read_json(f)))
 
-    # liked songs
     liked: list[PlaylistTrack] = []
     ls_path = sdir / "liked_songs.json"
     if ls_path.exists():
         liked = [_playlist_track_from_dict(d) for d in _read_json(ls_path)]
 
-    # saved albums
     albums: list[SavedAlbum] = []
     sa_path = sdir / "saved_albums.json"
     if sa_path.exists():
         albums = [_saved_album_from_dict(d) for d in _read_json(sa_path)]
 
-    # followed artists
     artists: list[FollowedArtist] = []
     fa_path = sdir / "followed_artists.json"
     if fa_path.exists():
         artists = [_followed_artist_from_dict(d) for d in _read_json(fa_path)]
 
-    # metadata
     meta_path = sdir / "export_meta.json"
     exported_at = None
     if meta_path.exists():
