@@ -11,12 +11,12 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Label, ListItem, ListView, Static
 
 from common.models import Library
-from common.store import load_workspace, save_workspace_auxiliary
+from common.store import load_workspace, save_workspace, save_workspace_auxiliary
 from tui.transient_status import TransientStatus
 from tui.views.base import BaseView
 from tui.views.p2a_view import ConfirmModal
 
-ListKind = Literal["albums", "artists", "songs"]
+ListKind = Literal["albums", "artists", "songs", "playlists"]
 
 _KIND_META: dict[ListKind, dict] = {
     "albums": {
@@ -60,6 +60,19 @@ _KIND_META: dict[ListKind, dict] = {
                 pt.track.album.name if pt.track.album else "",
             )
             for pt in lib.liked_songs
+        ],
+    },
+    "playlists": {
+        "menu_title": "Playlists",
+        "table_title": "Playlists",
+        "columns": ("Playlist", "Owner", "Tracks"),
+        "empty": "No playlists in the workspace. Run Spotify → Pull first.",
+        "attr": "playlists",
+        "label_fn": lambda pl: pl.name,
+        "confirm_prefix": "Remove playlist",
+        "rows": lambda lib: [
+            (pl.name, pl.owner or "", str(pl.track_count))
+            for pl in lib.playlists
         ],
     },
 }
@@ -270,7 +283,10 @@ class LocalLibraryListView(BaseView):
             if not (0 <= index < self._list_len(lib)):
                 raise IndexError("Row no longer valid; reload the view.")
             self._pop_at(lib, index)
-            save_workspace_auxiliary(lib)
+            if self._kind == "playlists":
+                save_workspace(lib)
+            else:
+                save_workspace_auxiliary(lib)
             return lib
 
         try:
@@ -292,3 +308,7 @@ def saved_artists_view() -> LocalLibraryListView:
 
 def saved_songs_view() -> LocalLibraryListView:
     return LocalLibraryListView("songs")
+
+
+def saved_playlists_view() -> LocalLibraryListView:
+    return LocalLibraryListView("playlists")

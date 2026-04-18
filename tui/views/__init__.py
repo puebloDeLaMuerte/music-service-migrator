@@ -13,11 +13,14 @@ MENU: list[tuple[str, str]] = [
     ("Tidal", "svc-tidal"),
     ("", "---"),
     ("Local Data", ""),
-    ("Dedupe", "data-dedupe"),
-    ("Playlist→Album", "data-p2a"),
     ("Saved albums", "data-saved-albums"),
     ("Saved artists", "data-saved-artists"),
     ("Saved songs", "data-saved-songs"),
+    ("Playlists", "data-playlists"),
+    ("", "---"),
+    ("Library tools", ""),
+    ("Dedupe", "data-dedupe"),
+    ("Playlist→Album", "data-p2a"),
     ("Images", "data-images"),
     ("", "---"),
     ("About", "about"),
@@ -35,6 +38,7 @@ def create_view(view_id: str, **kwargs):
     from tui.views.local_library_list_view import (
         saved_albums_view,
         saved_artists_view,
+        saved_playlists_view,
         saved_songs_view,
     )
     from tui.views.p2a_view import P2AView
@@ -55,6 +59,8 @@ def create_view(view_id: str, **kwargs):
         return saved_artists_view()
     if view_id == "data-saved-songs":
         return saved_songs_view()
+    if view_id == "data-playlists":
+        return saved_playlists_view()
     if view_id == "data-images":
         return ImagesView()
     if view_id == "about":
