@@ -24,6 +24,9 @@ class AlbumGroup:
     album_name: str
     album_id: str
     album_total_tracks: int
+    album_artists: str = ""
+    album_url: str | None = None
+    album_type: str | None = None
     present_track_ids: set[str] = field(default_factory=set)
     missing_tracks: list[str] = field(default_factory=list)
     in_library: bool = False
@@ -77,10 +80,12 @@ def analyse_playlist(
     """
     saved_album_ids = saved_album_ids or set()
 
-    # group playlist tracks by their album id
     tracks_by_album: dict[str, list[tuple[str, str]]] = defaultdict(list)
     album_names: dict[str, str] = {}
     album_totals: dict[str, int] = {}
+    album_artists: dict[str, str] = {}
+    album_urls: dict[str, str | None] = {}
+    album_types: dict[str, str | None] = {}
 
     for pt in playlist.tracks:
         album = pt.track.album
@@ -91,6 +96,10 @@ def analyse_playlist(
         album_names.setdefault(aid, album.name)
         if album.total_tracks:
             album_totals[aid] = album.total_tracks
+        if aid not in album_artists:
+            album_artists[aid] = ", ".join(a.name for a in album.artists) if album.artists else ""
+            album_urls[aid] = album.service_url
+            album_types[aid] = album.album_type
 
     groups: list[AlbumGroup] = []
     for aid, track_pairs in tracks_by_album.items():
@@ -107,11 +116,12 @@ def analyse_playlist(
             album_name=album_names[aid],
             album_id=aid,
             album_total_tracks=total,
+            album_artists=album_artists.get(aid, ""),
+            album_url=album_urls.get(aid),
+            album_type=album_types.get(aid),
             present_track_ids=present_ids,
             in_library=aid in saved_album_ids,
         )
-        # missing tracks can only be fully resolved if we have the album's
-        # track list from saved_albums; for now we note the count
         missing_count = total - len(present_ids)
         if missing_count > 0:
             group.missing_tracks = [f"({missing_count} track(s) not in playlist)"]

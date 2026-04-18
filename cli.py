@@ -17,6 +17,7 @@ import sys
 import click
 
 from common.log import get_logger
+from common.models import Playlist
 
 log = get_logger(__name__)
 
@@ -115,10 +116,15 @@ def dedupe() -> None:
 
 
 @data.command()
-def playlist2album() -> None:
-    """Detect albums embedded in playlists."""
+@click.option(
+    "--playlist", "-p", default=None,
+    help="Name (or substring) of a single playlist to analyse.",
+)
+def playlist2album(playlist: str | None) -> None:
+    """Detect albums embedded in playlists and optionally extract them."""
     from common.store import load_library
-    from spotify.album_detect import analyse_playlist
+    from data.playlist2album import Action, apply_actions
+    from spotify.album_detect import PlaylistAnalysis, analyse_playlist
 
     click.echo("Loading stored Spotify library…")
     library = load_library("spotify")
@@ -127,27 +133,123 @@ def playlist2album() -> None:
         click.echo("No playlists found. Run 'spotify pull' first.")
         return
 
+    # Filter playlists if --playlist given
+    if playlist:
+        needle = playlist.lower()
+        candidates = [p for p in library.playlists if needle in p.name.lower()]
+        if not candidates:
+            click.secho(f"No playlist matching '{playlist}' found.", fg="red")
+            return
+        playlists = candidates
+    else:
+        playlists = library.playlists
+
     saved_album_ids = {
         sa.album.service_id
         for sa in library.saved_albums
         if sa.album.service_id
     }
 
-    for pl in library.playlists:
+    # Phase 1: analyse and prompt per playlist
+    results: list[tuple[Playlist, PlaylistAnalysis]] = []
+    for pl in playlists:
         result = analyse_playlist(pl, saved_album_ids=saved_album_ids)
-        if not result.album_groups:
+        if result.album_groups:
+            results.append((pl, result))
+
+    if not results:
+        click.echo("No playlists with detected albums (>= 80% match).")
+        return
+
+    click.echo(f"\nFound albums in {len(results)} playlist(s).\n")
+
+    actions: list[Action] = []
+    for pl, result in results:
+        _display_analysis(pl, result)
+        choice = _prompt_action()
+
+        if choice == "q":
+            break
+        if choice == "s":
             continue
 
-        click.echo(f"\n  '{pl.name}' ({pl.track_count} tracks):")
-        for ag in result.album_groups:
-            status = "complete" if ag.is_complete else f"{ag.match_ratio:.0%}"
-            in_library = " [in your library]" if ag.in_library else ""
-            click.echo(f"    • {ag.album_name} – {status}{in_library}")
-            if ag.missing_tracks:
-                names = ", ".join(ag.missing_tracks)
-                click.echo(f"      missing: {names}")
-        if result.loose_track_count:
-            click.echo(f"    + {result.loose_track_count} tracks not part of any detected album")
+        flag_missing = choice == "c"
+
+        keep_leftovers = True
+        if result.loose_track_count > 0:
+            keep_leftovers = click.confirm(
+                f"  Leftover {result.loose_track_count} tracks – keep as trimmed playlist?",
+                default=True,
+            )
+
+        actions.append(Action(
+            playlist=pl,
+            analysis=result,
+            album_groups=result.album_groups,
+            keep_leftovers=keep_leftovers,
+            flag_missing=flag_missing,
+        ))
+
+    if not actions:
+        click.echo("\nNo actions queued.")
+        return
+
+    # Phase 2: dry-run summary
+    click.echo("\n" + "─" * 60)
+    click.echo("Dry-run summary:\n")
+    for a in actions:
+        album_names = ", ".join(ag.album_name for ag in a.album_groups)
+        click.echo(f"  '{a.playlist_name}':")
+        click.echo(f"    extract: {album_names}")
+        if a.tracks_remaining > 0 and a.keep_leftovers:
+            click.echo(f"    playlist: trim to {a.tracks_remaining} tracks")
+        else:
+            click.echo(f"    playlist: delete")
+    click.echo(f"\n  Total: {sum(a.albums_to_extract for a in actions)} album(s) "
+               f"from {len(actions)} playlist(s)")
+    click.echo("─" * 60)
+
+    if not click.confirm("\nApply these changes?", default=False):
+        click.echo("Aborted – no changes made.")
+        return
+
+    summary = apply_actions(actions, "spotify")
+    click.echo(
+        f"\nDone: {summary['albums_added']} album(s) added, "
+        f"{summary['playlists_modified']} playlist(s) trimmed, "
+        f"{summary['playlists_deleted']} playlist(s) deleted."
+    )
+
+
+def _display_analysis(pl: Playlist, result) -> None:
+    """Print the analysis findings for one playlist."""
+    click.echo(f"  '{pl.name}' ({pl.track_count} tracks):")
+    click.echo("  Albums found:")
+    for i, ag in enumerate(result.album_groups, 1):
+        status = "complete" if ag.is_complete else f"{ag.match_ratio:.0%}"
+        pct = f"({ag.present_count}/{ag.album_total_tracks})"
+        in_lib = " [in your library]" if ag.in_library else ""
+        artist_str = f" by {ag.album_artists}" if ag.album_artists else ""
+        click.echo(f"    {i}. {ag.album_name}{artist_str} – {status} {pct}{in_lib}")
+        if ag.missing_tracks:
+            click.echo(f"       missing: {', '.join(ag.missing_tracks)}")
+    if result.loose_track_count:
+        click.echo(f"  + {result.loose_track_count} loose tracks")
+    click.echo()
+
+
+def _prompt_action() -> str:
+    """Prompt for per-playlist action. Returns 'e', 'c', 's', or 'q'."""
+    while True:
+        click.echo("  What to do?")
+        click.echo("  [e] Extract album(s) to saved albums")
+        click.echo("  [c] Complete & extract (flag missing tracks)")
+        click.echo("  [s] Skip this playlist")
+        click.echo("  [q] Skip all remaining playlists")
+        choice = click.prompt("  ", prompt_suffix="> ", default="s", show_default=False).lower().strip()
+        if choice in ("e", "c", "s", "q"):
+            return choice
+        click.echo("  Invalid choice, try again.\n")
 
 
 @data.command()

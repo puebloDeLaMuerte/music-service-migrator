@@ -309,6 +309,61 @@ def save_library(library: Library) -> Path:
     return sdir
 
 
+def save_playlist(playlist: Playlist, service: str) -> Path:
+    """Write (or overwrite) a single playlist JSON on disk."""
+    sdir = _service_dir(service)
+    pl_dir = sdir / "playlists"
+    fname = sanitise_filename(playlist.name) + ".json"
+    path = pl_dir / fname
+    _write_json(path, _playlist_to_dict(playlist))
+    return path
+
+
+def delete_playlist(playlist_name: str, service: str) -> bool:
+    """Delete a playlist JSON from disk. Returns True if file existed."""
+    sdir = _service_dir(service)
+    path = sdir / "playlists" / (sanitise_filename(playlist_name) + ".json")
+    if path.exists():
+        path.unlink()
+        log.info("Deleted %s", path)
+        return True
+    log.warning("Playlist file not found for deletion: %s", path)
+    return False
+
+
+def append_saved_albums(albums: list[SavedAlbum], service: str) -> int:
+    """Merge new albums into saved_albums.json, skipping duplicates.
+
+    Returns the number of newly added albums.
+    """
+    sdir = _service_dir(service)
+    sa_path = sdir / "saved_albums.json"
+
+    existing: list[dict] = []
+    if sa_path.exists():
+        existing = _read_json(sa_path)
+
+    existing_ids = {
+        d.get("album", {}).get("service_id")
+        for d in existing
+        if d.get("album", {}).get("service_id")
+    }
+
+    added = 0
+    for sa in albums:
+        if sa.album.service_id and sa.album.service_id in existing_ids:
+            log.info("Album '%s' already in saved albums, skipping", sa.album.name)
+            continue
+        existing.append(_saved_album_to_dict(sa))
+        if sa.album.service_id:
+            existing_ids.add(sa.album.service_id)
+        added += 1
+
+    _write_json(sa_path, existing)
+    log.info("Appended %d new album(s) to saved_albums.json", added)
+    return added
+
+
 # ── Read ─────────────────────────────────────────────────────────────────────
 
 def _read_json(path: Path):
