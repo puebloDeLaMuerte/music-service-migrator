@@ -49,3 +49,17 @@ def output_dir() -> Path:
 
 def log_level() -> str:
     return get("LOG_LEVEL", "INFO")
+
+
+def tui_status_flash_seconds() -> float:
+    """How long transient TUI status lines stay visible before restoring baseline.
+
+    Override with env ``TUI_STATUS_FLASH_SECONDS`` (seconds, default ``5``).
+    """
+    _ensure_loaded()
+    raw = get("TUI_STATUS_FLASH_SECONDS", "5")
+    try:
+        value = float(raw or "5")
+    except (TypeError, ValueError):
+        return 5.0
+    return max(0.0, value)

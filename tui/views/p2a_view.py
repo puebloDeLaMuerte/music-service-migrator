@@ -14,6 +14,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Label, ListItem, ListView, Static
 
+from tui.transient_status import TransientStatus
 from tui.views.base import BaseView
 
 
@@ -116,6 +117,15 @@ _ACTION_METHODS = [
     "action_keep",
 ]
 
+# One-line status tooltips when an action row is highlighted (Rich markup).
+_P2A_ACTION_TOOLTIPS: tuple[str, ...] = (
+    r"  [yellow]\[d] Extract+delete: write album(s) to saved library and remove those "
+    r"tracks from this playlist file (confirms; may ask about leftover tracks).[/]",
+    r"  [yellow]\[v] Extract+keep: write album(s) to saved library; playlist file stays "
+    r"unchanged (tracks remain listed).[/]",
+    r"  [yellow]\[n] Keep: do nothing to disk for this selection—pick another row or action.[/]",
+)
+
 
 class P2AView(BaseView):
     """List columns use Textual's default ListView fill ($surface); detail has no extra tint
@@ -199,9 +209,9 @@ class P2AView(BaseView):
                 yield Static("Actions", classes="p2a-col-title")
                 yield Static("", classes="p2a-col-gap")
                 yield ListView(
-                    ListItem(Label("  [d] Extract+delete")),
-                    ListItem(Label("  [v] Extract+keep")),
-                    ListItem(Label("  [n] Keep")),
+                    ListItem(Label(r"  \[d] Extract+delete")),
+                    ListItem(Label(r"  \[v] Extract+keep")),
+                    ListItem(Label(r"  \[n] Keep")),
                     id="p2a-actions",
                 )
             with Vertical(id="p2a-col-detail"):
@@ -211,6 +221,8 @@ class P2AView(BaseView):
         yield Static("Loading library…", id="p2a-status")
 
     def on_mount(self) -> None:
+        self._status_line = TransientStatus(self.query_one("#p2a-status", Static))
+        self._status_line.set_baseline("Loading library…")
         self.run_worker(self._load_data(), group="p2a-load")
 
     # ── Column navigation ─────────────────────────────────────────
@@ -232,6 +244,11 @@ class P2AView(BaseView):
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         if event.list_view.id == "playlist-list" and event.item is not None:
             self._refresh_detail_from_list()
+            event.stop()
+        elif event.list_view.id == "p2a-actions":
+            idx = event.list_view.index
+            if idx is not None and 0 <= idx < len(_P2A_ACTION_TOOLTIPS):
+                self._status_line.flash(_P2A_ACTION_TOOLTIPS[idx])
             event.stop()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
@@ -381,9 +398,9 @@ class P2AView(BaseView):
 
     def _update_status(self) -> None:
         n = len(self._results)
-        self.query_one("#p2a-status", Static).update(
+        self._status_line.set_baseline(
             f"  {n} playlist(s) with album groups  ·  "
-            f"[d] remove from playlist  ·  [v] keep in playlist  ·  [n] leave unchanged"
+            r"\[d] remove from playlist  ·  \[v] keep in playlist  ·  \[n] leave unchanged"
         )
 
     # ── Actions ───────────────────────────────────────────────────
@@ -402,7 +419,7 @@ class P2AView(BaseView):
     def action_keep(self) -> None:
         if not self._selection_bundle():
             return
-        self.query_one("#p2a-status", Static).update(
+        self._status_line.set_baseline(
             "  No changes — select another row or action."
         )
 
@@ -445,11 +462,11 @@ class P2AView(BaseView):
                 keep_remaining_in_playlist_file=True,
                 service="spotify",
             )
-            self.query_one("#p2a-status", Static).update(
+            self._status_line.set_baseline(
                 f"  Added {r.albums_added} album(s) to saved library (playlist unchanged)."
             )
         except Exception as exc:
-            self.query_one("#p2a-status", Static).update(f"  Error: {exc}")
+            self._status_line.set_baseline(f"  Error: {exc}")
             return
         await self._load_data()
 
@@ -526,8 +543,8 @@ class P2AView(BaseView):
             msg = f"  {r.detail.get('playlist_outcome', 'done')}"
             if r.albums_added:
                 msg = f"  Added {r.albums_added} album(s). " + msg
-            self.query_one("#p2a-status", Static).update(msg)
+            self._status_line.set_baseline(msg)
         except Exception as exc:
-            self.query_one("#p2a-status", Static).update(f"  Error: {exc}")
+            self._status_line.set_baseline(f"  Error: {exc}")
             return
         await self._load_data()

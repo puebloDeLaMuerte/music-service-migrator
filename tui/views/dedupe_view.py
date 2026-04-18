@@ -8,6 +8,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Label, ListItem, ListView, Static
 
+from tui.transient_status import TransientStatus
 from tui.views.base import BaseView
 
 
@@ -61,6 +62,8 @@ class DedupeView(BaseView):
         yield Static("Loading…", id="dedupe-status")
 
     def on_mount(self) -> None:
+        self._status_line = TransientStatus(self.query_one("#dedupe-status", Static))
+        self._status_line.set_baseline("Loading…")
         table = self.query_one("#table", DataTable)
         table.add_columns("Playlists", "Track", "Artists", "Positions")
         table.cursor_type = "cell"
@@ -98,13 +101,13 @@ class DedupeView(BaseView):
     def on_data_table_cell_selected(
         self, event: DataTable.CellSelected
     ) -> None:
-        self.query_one("#dedupe-status", Static).update(
+        self._status_line.set_baseline(
             "  ←→ browse columns  ·  ← past first column for actions"
         )
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.list_view.id == "dedupe-actions":
-            self.query_one("#dedupe-status", Static).update(
+            self._status_line.flash(
                 "  [yellow]Coming soon — duplicate management "
                 "not yet implemented.[/]"
             )
@@ -119,7 +122,7 @@ class DedupeView(BaseView):
         library = await asyncio.to_thread(load_library, "spotify")
 
         if not library.playlists:
-            self.query_one("#dedupe-status", Static).update(
+            self._status_line.set_baseline(
                 "No playlists found. Run 'spotify pull' first."
             )
             return
@@ -128,7 +131,7 @@ class DedupeView(BaseView):
         table = self.query_one("#table", DataTable)
 
         if not dupes:
-            self.query_one("#dedupe-status", Static).update(
+            self._status_line.set_baseline(
                 "No cross-playlist duplicates found."
             )
             return
@@ -138,7 +141,7 @@ class DedupeView(BaseView):
             positions = ", ".join(f"{name} #{pos}" for name, pos in d.occurrences)
             table.add_row(pl_names, d.track_name, d.artists, positions)
 
-        self.query_one("#dedupe-status", Static).update(
+        self._status_line.set_baseline(
             f"{len(dupes)} duplicate(s) found  ·  ↑↓ rows  ←→ columns  ·  "
             f"← past first column for actions"
         )
