@@ -1,14 +1,12 @@
 """Extract albums embedded in playlists.
 
-Business logic for the interactive playlist-to-album workflow.  The CLI layer
-(cli.py) handles prompts; this module owns the data transformations and disk
-writes.
+Applies one extract operation at a time (saved albums + optional playlist trim).
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,42 +16,11 @@ from common.models import Album, Playlist, PlaylistTrack, SavedAlbum
 from common.store import (
     append_saved_albums,
     delete_playlist,
-    sanitise_filename,
     save_playlist,
 )
-from spotify.album_detect import AlbumGroup, PlaylistAnalysis
+from spotify.album_detect import AlbumGroup
 
 log = get_logger(__name__)
-
-
-@dataclass
-class Action:
-    """One queued change for a single playlist."""
-
-    playlist: Playlist
-    analysis: PlaylistAnalysis
-    album_groups: list[AlbumGroup]
-    keep_leftovers: bool = True
-    flag_missing: bool = False
-
-    @property
-    def playlist_name(self) -> str:
-        return self.playlist.name
-
-    @property
-    def albums_to_extract(self) -> int:
-        return len(self.album_groups)
-
-    @property
-    def tracks_to_remove(self) -> int:
-        ids = set()
-        for ag in self.album_groups:
-            ids |= ag.present_track_ids
-        return len(ids)
-
-    @property
-    def tracks_remaining(self) -> int:
-        return self.playlist.track_count - self.tracks_to_remove
 
 
 def build_trimmed_playlist(playlist: Playlist, album_groups: list[AlbumGroup]) -> Playlist:
@@ -125,69 +92,113 @@ def _album_from_playlist_tracks(
     return album
 
 
-def apply_actions(actions: list[Action], service: str) -> dict:
-    """Execute all queued actions against stored data on disk.
-
-    Returns a summary dict suitable for writing as a log file.
-    """
-    now = datetime.now(timezone.utc)
-    log_entries: list[dict] = []
-    total_albums_added = 0
-    total_playlists_modified = 0
-    total_playlists_deleted = 0
-
-    for action in actions:
-        albums_to_save: list[SavedAlbum] = []
-        missing_flags: list[dict] = []
-
-        for ag in action.album_groups:
-            album = _album_from_playlist_tracks(action.playlist, ag)
-            albums_to_save.append(SavedAlbum(album=album, saved_at=now))
-
-            if action.flag_missing and ag.missing_tracks:
-                missing_flags.append({
-                    "album": ag.album_name,
-                    "album_id": ag.album_id,
-                    "missing": ag.missing_tracks,
-                })
-
-        added = append_saved_albums(albums_to_save, service)
-        total_albums_added += added
-
-        if action.keep_leftovers and action.tracks_remaining > 0:
-            trimmed = build_trimmed_playlist(action.playlist, action.album_groups)
-            save_playlist(trimmed, service)
-            total_playlists_modified += 1
-            playlist_outcome = f"trimmed to {trimmed.track_count} tracks"
-        else:
-            delete_playlist(action.playlist.name, service)
-            total_playlists_deleted += 1
-            playlist_outcome = "deleted"
-
-        entry = {
-            "playlist": action.playlist_name,
-            "albums_extracted": [ag.album_name for ag in action.album_groups],
-            "albums_added_to_library": added,
-            "playlist_outcome": playlist_outcome,
-        }
-        if missing_flags:
-            entry["missing_tracks_flagged"] = missing_flags
-        log_entries.append(entry)
-
-    summary = {
-        "applied_at": now.isoformat(),
-        "actions_count": len(actions),
-        "albums_added": total_albums_added,
-        "playlists_modified": total_playlists_modified,
-        "playlists_deleted": total_playlists_deleted,
-        "details": log_entries,
-    }
-
+def _append_log(service: str, entry: dict) -> None:
     log_path = config.output_dir() / service / "playlist2album_log.json"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8",
-    )
-    log.info("Action log written to %s", log_path)
+    if log_path.exists():
+        data = json.loads(log_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            data = {}
+        ops = data.get("operations")
+        if not isinstance(ops, list):
+            ops = []
+    else:
+        data = {}
+        ops = []
+    ops.append(entry)
+    data["operations"] = ops
+    data["last_updated"] = datetime.now(timezone.utc).isoformat()
+    log_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    log.info("playlist2album log updated: %s", log_path)
 
-    return summary
+
+@dataclass
+class ApplyExtractResult:
+    """Outcome of a single extract operation."""
+
+    albums_added: int
+    playlist_modified: bool
+    playlist_deleted: bool
+    detail: dict
+
+
+def apply_extract_once(
+    playlist: Playlist,
+    album_groups: list[AlbumGroup],
+    *,
+    remove_from_playlist: bool,
+    keep_remaining_in_playlist_file: bool = True,
+    service: str = "spotify",
+) -> ApplyExtractResult:
+    """Save album(s) to saved_albums; optionally remove their tracks from the playlist file.
+
+    Args:
+        playlist: Current playlist model (from disk).
+        album_groups: Subset (or all) of detected groups to extract.
+        remove_from_playlist: If True, remove those tracks from the playlist JSON;
+            if False, only append to saved_albums (extract+keep).
+        keep_remaining_in_playlist_file: When True, save trimmed playlist if tracks remain;
+            when False, delete the playlist file even if tracks would remain (user chose
+            "discard" in leftovers flow).
+        service: Output service folder name.
+    """
+    if not album_groups:
+        raise ValueError("album_groups must not be empty")
+
+    now = datetime.now(timezone.utc)
+    albums_to_save = [
+        SavedAlbum(
+            album=_album_from_playlist_tracks(playlist, ag),
+            saved_at=now,
+        )
+        for ag in album_groups
+    ]
+    added = append_saved_albums(albums_to_save, service)
+
+    playlist_modified = False
+    playlist_deleted = False
+
+    if not remove_from_playlist:
+        detail = {
+            "playlist": playlist.name,
+            "albums_extracted": [ag.album_name for ag in album_groups],
+            "albums_added_to_library": added,
+            "playlist_outcome": "unchanged (extract+keep)",
+        }
+        _append_log(service, {"at": now.isoformat(), **detail})
+        return ApplyExtractResult(
+            albums_added=added,
+            playlist_modified=False,
+            playlist_deleted=False,
+            detail=detail,
+        )
+
+    trimmed = build_trimmed_playlist(playlist, album_groups)
+
+    if trimmed.track_count == 0:
+        delete_playlist(playlist.name, service)
+        playlist_deleted = True
+        outcome = "deleted (empty after trim)"
+    elif keep_remaining_in_playlist_file:
+        save_playlist(trimmed, service)
+        playlist_modified = True
+        outcome = f"trimmed to {trimmed.track_count} tracks"
+    else:
+        delete_playlist(playlist.name, service)
+        playlist_deleted = True
+        outcome = "deleted (discarded remaining tracks)"
+
+    detail = {
+        "playlist": playlist.name,
+        "albums_extracted": [ag.album_name for ag in album_groups],
+        "albums_added_to_library": added,
+        "playlist_outcome": outcome,
+    }
+    _append_log(service, {"at": now.isoformat(), **detail})
+
+    return ApplyExtractResult(
+        albums_added=added,
+        playlist_modified=playlist_modified,
+        playlist_deleted=playlist_deleted,
+        detail=detail,
+    )

@@ -1,6 +1,6 @@
-"""Playlist-to-album view — the most interactive screen.
+"""Playlist-to-album view — tree playlist list, per-album extract, instant apply.
 
-Layout: playlist list | action buttons | detail pane.
+Layout: playlist tree | actions | detail pane.
 """
 
 from __future__ import annotations
@@ -12,14 +12,27 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import (
-    Label,
-    ListItem,
-    ListView,
-    Static,
-)
+from textual.widgets import Label, ListItem, ListView, Static
 
 from tui.views.base import BaseView
+
+
+# ── List row metadata ───────────────────────────────────────────────────────
+
+
+class P2AListItem(ListItem):
+    """Sidebar row: playlist parent (album_idx None) or └ album child."""
+
+    def __init__(
+        self,
+        label: Label,
+        *,
+        playlist_idx: int,
+        album_idx: int | None,
+    ) -> None:
+        super().__init__(label)
+        self.p2a_playlist_idx = playlist_idx
+        self.p2a_album_idx = album_idx
 
 
 # ── Modals ───────────────────────────────────────────────────────────────────
@@ -35,7 +48,7 @@ class ConfirmModal(ModalScreen[bool]):
     CSS = """
     ConfirmModal { align: center middle; }
     #confirm-box {
-        width: 60; height: auto; max-height: 20;
+        width: 62; height: auto; max-height: 22;
         border: thick $accent; background: $surface; padding: 1 2;
     }
     """
@@ -46,9 +59,9 @@ class ConfirmModal(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="confirm-box"):
-            yield Static(self._body)
+            yield Static(self._body, markup=True)
             yield Static(
-                "\n[bold]y[/] = apply   [bold]n[/] / ESC = cancel", markup=True
+                "\n[bold]y[/] = confirm   [bold]n[/] / ESC = cancel", markup=True
             )
 
     def action_confirm_yes(self) -> None:
@@ -59,33 +72,33 @@ class ConfirmModal(ModalScreen[bool]):
 
 
 class LeftoversModal(ModalScreen[bool]):
+    """keep_remaining=True → save trimmed playlist; False → delete playlist file."""
+
     BINDINGS = [
-        Binding("y", "yes", "Keep", show=True),
-        Binding("n", "no", "Discard", show=True),
-        Binding("escape", "yes", "Keep"),
+        Binding("y", "yes", "Keep file", show=True),
+        Binding("n", "no", "Delete playlist", show=True),
+        Binding("escape", "yes", "Keep file"),
     ]
 
     CSS = """
     LeftoversModal { align: center middle; }
     #leftovers-box {
-        width: 55; height: auto;
+        width: 58; height: auto;
         border: thick $warning; background: $surface; padding: 1 2;
     }
     """
 
-    def __init__(self, count: int) -> None:
+    def __init__(self, body: str) -> None:
         super().__init__()
-        self._count = count
+        self._body = body
 
     def compose(self) -> ComposeResult:
         with Vertical(id="leftovers-box"):
+            yield Static(self._body, markup=True)
             yield Static(
-                f"[bold]{self._count}[/] loose tracks remain.\n"
-                "Keep as trimmed playlist?",
+                "\n[bold]y[/] = keep playlist file with remaining tracks\n"
+                "[bold]n[/] = delete entire playlist file",
                 markup=True,
-            )
-            yield Static(
-                "\n[bold]y[/] = keep   [bold]n[/] = discard", markup=True
             )
 
     def action_yes(self) -> None:
@@ -98,19 +111,20 @@ class LeftoversModal(ModalScreen[bool]):
 # ── P2A view ─────────────────────────────────────────────────────────────────
 
 _ACTION_METHODS = [
-    "action_extract",
-    "action_complete_extract",
-    "action_skip",
-    "action_apply",
+    "action_extract_delete",
+    "action_extract_keep",
+    "action_keep",
 ]
 
 
 class P2AView(BaseView):
+    """List columns use Textual's default ListView fill ($surface); detail has no extra tint
+    (main $background). Album lines use [on $surface] to match the list columns."""
+
     BINDINGS: ClassVar = [
-        Binding("e", "extract", show=False),
-        Binding("c", "complete_extract", show=False),
-        Binding("s", "skip", show=False),
-        Binding("a", "apply", show=False),
+        Binding("d", "extract_delete", show=False),
+        Binding("v", "extract_keep", show=False),
+        Binding("n", "keep", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -122,7 +136,7 @@ class P2AView(BaseView):
         border-right: solid $primary-background-lighten-2;
     }
     #p2a-actions {
-        width: 22;
+        width: 24;
         border-right: solid $primary-background-lighten-2;
     }
     #detail {
@@ -142,18 +156,15 @@ class P2AView(BaseView):
     def __init__(self, playlist_filter: str | None = None) -> None:
         super().__init__()
         self._filter = playlist_filter
-        self._results: list = []
-        self._actions_queue: list = []
-        self._decided: set[int] = set()
+        self._results: list[tuple] = []
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="p2a-main"):
             yield ListView(id="playlist-list")
             yield ListView(
-                ListItem(Label("  [e] Extract")),
-                ListItem(Label("  [c] Complete+Extract")),
-                ListItem(Label("  [s] Skip")),
-                ListItem(Label("  [a] Apply queued")),
+                ListItem(Label("  [d] Extract+delete")),
+                ListItem(Label("  [v] Extract+keep")),
+                ListItem(Label("  [n] Keep")),
                 id="p2a-actions",
             )
             yield Static("Loading…", id="detail", markup=True)
@@ -162,7 +173,7 @@ class P2AView(BaseView):
     def on_mount(self) -> None:
         self.run_worker(self._load_data(), group="p2a-load")
 
-    # ── Column navigation (called by MigratorApp) ─────────────────
+    # ── Column navigation ─────────────────────────────────────────
 
     def zone_left(self) -> None:
         focused = self.app.focused
@@ -176,13 +187,11 @@ class P2AView(BaseView):
         if focused and getattr(focused, "id", None) == "playlist-list":
             self.query_one("#p2a-actions").focus()
 
-    # ── Event routing ───────────────────────────────────────────────
+    # ── Events ────────────────────────────────────────────────────
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         if event.list_view.id == "playlist-list" and event.item is not None:
-            idx = event.list_view.index
-            if idx is not None:
-                self._show_detail(idx)
+            self._refresh_detail_from_list()
             event.stop()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
@@ -196,7 +205,71 @@ class P2AView(BaseView):
         elif event.list_view.id == "playlist-list":
             event.stop()
 
-    # ── Data loading ────────────────────────────────────────────────
+    # ── Selection helpers ─────────────────────────────────────────
+
+    def _current_row(self) -> P2AListItem | None:
+        lv = self.query_one("#playlist-list", ListView)
+        i = lv.index
+        if i is None:
+            return None
+        children = list(lv.children)
+        if i < 0 or i >= len(children):
+            return None
+        row = children[i]
+        return row if isinstance(row, P2AListItem) else None
+
+    def _highlight_indices(self, row: P2AListItem | None) -> set[int] | None:
+        if row is None:
+            return None
+        _, result = self._results[row.p2a_playlist_idx]
+        if row.p2a_album_idx is None:
+            return set(range(len(result.album_groups)))
+        return {row.p2a_album_idx}
+
+    def _refresh_detail_from_list(self) -> None:
+        row = self._current_row()
+        if row is None:
+            return
+        pl, result = self._results[row.p2a_playlist_idx]
+        self._render_detail(pl, result, self._highlight_indices(row))
+
+    def _render_detail(
+        self,
+        pl,
+        result,
+        highlight_idx: set[int] | None,
+    ) -> None:
+        lines: list[str] = []
+        lines.append(f"[bold]'{pl.name}'[/] ({pl.track_count} tracks)\n")
+        lines.append("[underline]Albums found:[/]")
+        for i, ag in enumerate(result.album_groups):
+            hl = highlight_idx is not None and i in highlight_idx
+            if ag.is_complete:
+                status = "[green]complete[/]"
+            else:
+                status = f"{ag.match_ratio:.0%}"
+            pct = f"({ag.present_count}/{ag.album_total_tracks})"
+            in_lib = " [dim]\\[in your library][/]" if ag.in_library else ""
+            artist = (
+                f" [italic]by {ag.album_artists}[/]" if ag.album_artists else ""
+            )
+            title_line = f"  {i + 1}. [bold]{ag.album_name}[/]{artist}"
+            if hl:
+                title_line = f"[on $surface]{title_line}[/]"
+            lines.append(title_line)
+            lines.append(f"     {status} {pct}{in_lib}")
+            if ag.missing_tracks:
+                lines.append(
+                    f"     [yellow]missing: {', '.join(ag.missing_tracks)}[/]"
+                )
+        if result.loose_track_count:
+            lines.append(
+                f"\n  + [yellow]{result.loose_track_count}[/] loose tracks "
+                "(not part of a detected album above)"
+            )
+        self.query_one("#detail", Static).update("\n".join(lines))
+
+    # ── Data loading ──────────────────────────────────────────────
 
     async def _load_data(self) -> None:
         from common.store import load_library
@@ -204,10 +277,14 @@ class P2AView(BaseView):
 
         library = await asyncio.to_thread(load_library, "spotify")
 
+        lv = self.query_one("#playlist-list", ListView)
+        lv.clear()
+
         if not library.playlists:
             self.query_one("#detail", Static).update(
                 "[yellow]No playlists. Run 'spotify pull' first.[/]"
             )
+            self._update_status()
             return
 
         playlists = library.playlists
@@ -218,6 +295,7 @@ class P2AView(BaseView):
                 self.query_one("#detail", Static).update(
                     f"[yellow]No playlist matching '{self._filter}'.[/]"
                 )
+                self._update_status()
                 return
 
         saved_ids = {
@@ -226,6 +304,7 @@ class P2AView(BaseView):
             if sa.album.service_id
         }
 
+        self._results = []
         for pl in playlists:
             result = analyse_playlist(pl, saved_album_ids=saved_ids)
             if result.album_groups:
@@ -238,182 +317,177 @@ class P2AView(BaseView):
             self._update_status()
             return
 
-        lv = self.query_one("#playlist-list", ListView)
-        for pl, _ in self._results:
-            lv.append(ListItem(Label(pl.name)))
+        for pi, (pl, result) in enumerate(self._results):
+            lv.append(
+                P2AListItem(
+                    Label(pl.name),
+                    playlist_idx=pi,
+                    album_idx=None,
+                )
+            )
+            if len(result.album_groups) > 1:
+                for ai, ag in enumerate(result.album_groups):
+                    lv.append(
+                        P2AListItem(
+                            Label(f"  └ {ag.album_name}"),
+                            playlist_idx=pi,
+                            album_idx=ai,
+                        )
+                    )
 
         self._update_status()
-        if self._results:
-            lv.index = 0
-            self._show_detail(0)
-
-    # ── Detail display ──────────────────────────────────────────────
-
-    def _show_detail(self, idx: int) -> None:
-        if idx < 0 or idx >= len(self._results):
-            return
-        pl, result = self._results[idx]
-        lines: list[str] = []
-        lines.append(f"[bold]'{pl.name}'[/] ({pl.track_count} tracks)\n")
-        lines.append("[underline]Albums found:[/]")
-        for i, ag in enumerate(result.album_groups, 1):
-            if ag.is_complete:
-                status = "[green]complete[/]"
-            else:
-                status = f"{ag.match_ratio:.0%}"
-            pct = f"({ag.present_count}/{ag.album_total_tracks})"
-            in_lib = " [dim]\\[in your library][/]" if ag.in_library else ""
-            artist = (
-                f" [italic]by {ag.album_artists}[/]" if ag.album_artists else ""
-            )
-            lines.append(f"  {i}. [bold]{ag.album_name}[/]{artist}")
-            lines.append(f"     {status} {pct}{in_lib}")
-            if ag.missing_tracks:
-                lines.append(
-                    f"     [yellow]missing: {', '.join(ag.missing_tracks)}[/]"
-                )
-        if result.loose_track_count:
-            lines.append(
-                f"\n  + [yellow]{result.loose_track_count}[/] loose tracks"
-            )
-
-        if idx in self._decided:
-            action = next(
-                (a for a in self._actions_queue if a.playlist is pl), None
-            )
-            if action:
-                lines.append(
-                    f"\n[green]✓ Queued: extract "
-                    f"{action.albums_to_extract} album(s)[/]"
-                )
-            else:
-                lines.append("\n[dim]— Skipped[/]")
-
-        self.query_one("#detail", Static).update("\n".join(lines))
+        lv.index = 0
+        self._refresh_detail_from_list()
 
     def _update_status(self) -> None:
-        total_albums = sum(a.albums_to_extract for a in self._actions_queue)
-        msg = (
-            f"  {len(self._results)} playlist(s)  ·  "
-            f"Queued: {len(self._actions_queue)} action(s), "
-            f"{total_albums} album(s)"
+        n = len(self._results)
+        self.query_one("#p2a-status", Static).update(
+            f"  {n} playlist(s) with album groups  ·  "
+            f"[d] remove from playlist  ·  [v] keep in playlist  ·  [n] leave unchanged"
         )
-        self.query_one("#p2a-status", Static).update(msg)
 
-    # ── Navigation helpers ──────────────────────────────────────────
+    # ── Actions ───────────────────────────────────────────────────
 
-    def _current_index(self) -> int | None:
-        return self.query_one("#playlist-list", ListView).index
-
-    def _advance(self) -> None:
-        lv = self.query_one("#playlist-list", ListView)
-        if lv.index is None:
-            return
-        start = lv.index + 1
-        for i in range(start, len(self._results)):
-            if i not in self._decided:
-                lv.index = i
-                self._show_detail(i)
-                return
-
-    # ── Action queue ────────────────────────────────────────────────
-
-    def _queue_action(self, flag_missing: bool) -> None:
-        idx = self._current_index()
-        if idx is None or idx in self._decided:
-            return
-        _, result = self._results[idx]
-
-        if result.loose_track_count > 0:
-            self.app.push_screen(
-                LeftoversModal(result.loose_track_count),
-                callback=lambda keep: self._finish_queue(
-                    idx, flag_missing, keep
-                ),
-            )
+    def _selection_bundle(self):
+        row = self._current_row()
+        if not row or not self._results:
+            return None
+        pl, result = self._results[row.p2a_playlist_idx]
+        if row.p2a_album_idx is None:
+            groups = list(result.album_groups)
         else:
-            self._finish_queue(idx, flag_missing, keep_leftovers=True)
+            groups = [result.album_groups[row.p2a_album_idx]]
+        return pl, result, groups, row
 
-    def _finish_queue(
-        self, idx: int, flag_missing: bool, keep_leftovers: bool
+    def action_keep(self) -> None:
+        if not self._selection_bundle():
+            return
+        self.query_one("#p2a-status", Static).update(
+            "  No changes — select another row or action."
+        )
+
+    def action_extract_keep(self) -> None:
+        bundle = self._selection_bundle()
+        if not bundle:
+            return
+        pl, result, groups, row = bundle
+        names = ", ".join(g.album_name for g in groups)
+        scope = (
+            f"all {len(groups)} album(s) in this playlist"
+            if row.p2a_album_idx is None
+            else f"album “{groups[0].album_name}”"
+        )
+        body = (
+            f"[bold]Extract+keep[/]\n\n"
+            f"Playlist: [bold]{pl.name}[/]\n"
+            f"Scope: {scope}\n\n"
+            f"Albums: {names}\n\n"
+            "Saved album entries will be added from local data. "
+            "Tracks stay in the playlist (duplicate: library + playlist).\n\n"
+            "Confirm?"
+        )
+        self.app.push_screen(ConfirmModal(body), lambda ok: self._on_extract_keep(ok, pl, groups))
+
+    def _on_extract_keep(self, ok: bool, pl, groups) -> None:
+        if not ok:
+            return
+        self.run_worker(self._do_extract_keep(pl, groups), group="p2a-apply")
+
+    async def _do_extract_keep(self, pl, groups) -> None:
+        from data.playlist2album import apply_extract_once
+
+        try:
+            r = await asyncio.to_thread(
+                apply_extract_once,
+                pl,
+                groups,
+                remove_from_playlist=False,
+                keep_remaining_in_playlist_file=True,
+                service="spotify",
+            )
+            self.query_one("#p2a-status", Static).update(
+                f"  Added {r.albums_added} album(s) to saved library (playlist unchanged)."
+            )
+        except Exception as exc:
+            self.query_one("#p2a-status", Static).update(f"  Error: {exc}")
+            return
+        await self._load_data()
+
+    def action_extract_delete(self) -> None:
+        bundle = self._selection_bundle()
+        if not bundle:
+            return
+        pl, result, groups, row = bundle
+        names = ", ".join(g.album_name for g in groups)
+        scope = (
+            f"all {len(groups)} album(s)"
+            if row.p2a_album_idx is None
+            else f"“{groups[0].album_name}”"
+        )
+
+        def do_confirm(ok: bool) -> None:
+            if not ok:
+                return
+            if result.loose_track_count > 0:
+                body = (
+                    f"This playlist has [bold]{result.loose_track_count}[/] loose "
+                    "track(s) not tied to the album(s) you are extracting.\n\n"
+                    "After removing the album tracks, do you want to keep a playlist "
+                    "file with what is left, or delete the playlist file entirely?"
+                )
+                self.app.push_screen(
+                    LeftoversModal(body),
+                    lambda keep_file: self._run_extract_delete(
+                        pl, groups, keep_file
+                    ),
+                )
+            else:
+                self._run_extract_delete(pl, groups, True)
+
+        body = (
+            f"[bold]Extract+delete[/]\n\n"
+            f"Playlist: [bold]{pl.name}[/]\n"
+            f"Scope: {scope}\n\n"
+            f"Albums: {names}\n\n"
+            "[bold yellow]Those tracks will be removed from this playlist file[/] "
+            "after saving album(s) to your local saved library.\n\n"
+            "Confirm?"
+        )
+        self.app.push_screen(ConfirmModal(body), do_confirm)
+
+    def _run_extract_delete(
+        self,
+        pl,
+        groups: list,
+        keep_remaining_in_playlist_file: bool,
     ) -> None:
-        from data.playlist2album import Action
+        self.run_worker(
+            self._do_extract_delete(pl, groups, keep_remaining_in_playlist_file),
+            group="p2a-apply",
+        )
 
-        pl, result = self._results[idx]
-        self._actions_queue.append(
-            Action(
-                playlist=pl,
-                analysis=result,
-                album_groups=result.album_groups,
-                keep_leftovers=keep_leftovers,
-                flag_missing=flag_missing,
+    async def _do_extract_delete(
+        self,
+        pl,
+        groups: list,
+        keep_remaining_in_playlist_file: bool,
+    ) -> None:
+        from data.playlist2album import apply_extract_once
+
+        try:
+            r = await asyncio.to_thread(
+                apply_extract_once,
+                pl,
+                groups,
+                remove_from_playlist=True,
+                keep_remaining_in_playlist_file=keep_remaining_in_playlist_file,
+                service="spotify",
             )
-        )
-        self._decided.add(idx)
-        self._update_status()
-        self._show_detail(idx)
-        self._advance()
-
-    # ── Key / action-button methods ─────────────────────────────────
-
-    def action_extract(self) -> None:
-        self._queue_action(flag_missing=False)
-
-    def action_complete_extract(self) -> None:
-        self._queue_action(flag_missing=True)
-
-    def action_skip(self) -> None:
-        idx = self._current_index()
-        if idx is None or idx in self._decided:
+            msg = f"  {r.detail.get('playlist_outcome', 'done')}"
+            if r.albums_added:
+                msg = f"  Added {r.albums_added} album(s). " + msg
+            self.query_one("#p2a-status", Static).update(msg)
+        except Exception as exc:
+            self.query_one("#p2a-status", Static).update(f"  Error: {exc}")
             return
-        self._decided.add(idx)
-        self._update_status()
-        self._show_detail(idx)
-        self._advance()
-
-    def action_apply(self) -> None:
-        if not self._actions_queue:
-            return
-
-        lines = ["[bold]Apply these changes?[/]\n"]
-        for a in self._actions_queue:
-            albums = ", ".join(ag.album_name for ag in a.album_groups)
-            outcome = (
-                f"trim to {a.tracks_remaining} tracks"
-                if a.keep_leftovers and a.tracks_remaining > 0
-                else "delete"
-            )
-            lines.append(f"  [bold]{a.playlist_name}[/]")
-            lines.append(f"    extract: {albums}")
-            lines.append(f"    playlist: {outcome}")
-        total = sum(a.albums_to_extract for a in self._actions_queue)
-        lines.append(
-            f"\n  Total: {total} album(s) from "
-            f"{len(self._actions_queue)} playlist(s)"
-        )
-
-        self.app.push_screen(
-            ConfirmModal("\n".join(lines)),
-            callback=self._on_apply_confirmed,
-        )
-
-    def _on_apply_confirmed(self, confirmed: bool) -> None:
-        if not confirmed:
-            return
-        self.run_worker(self._do_apply(), group="p2a-apply")
-
-    async def _do_apply(self) -> None:
-        from data.playlist2album import apply_actions
-
-        summary = await asyncio.to_thread(
-            apply_actions, self._actions_queue, "spotify"
-        )
-        detail = self.query_one("#detail", Static)
-        detail.update(
-            f"[bold green]Done![/]\n\n"
-            f"  {summary['albums_added']} album(s) added\n"
-            f"  {summary['playlists_modified']} playlist(s) trimmed\n"
-            f"  {summary['playlists_deleted']} playlist(s) deleted\n\n"
-            f"[dim]Done.[/]"
-        )
-        self.query_one("#p2a-status", Static).update("  Changes applied.")
+        await self._load_data()
