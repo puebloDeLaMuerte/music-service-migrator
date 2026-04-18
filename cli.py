@@ -1,7 +1,7 @@
 """music-service-migrator – unified CLI entry point.
 
 Usage:
-    python cli.py spotify export   [--split] [--liked-songs] [--html-report]
+    python cli.py spotify pull
     python cli.py spotify dedupe
     python cli.py spotify detect-albums
     python cli.py migrate spotify-to-tidal          (future)
@@ -9,11 +9,32 @@ Usage:
 
 from __future__ import annotations
 
+import sys
+
 import click
 
 from common.log import get_logger
 
 log = get_logger(__name__)
+
+
+def _handle_spotify_errors(func):
+    """Decorator that catches SpotifyAuthError and exits cleanly."""
+    import functools
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as exc:
+            from spotify.client import SpotifyAuthError
+
+            if isinstance(exc, SpotifyAuthError):
+                click.secho(f"Error: {exc}", fg="red", err=True)
+                sys.exit(1)
+            raise
+
+    return wrapper
 
 
 @click.group()
@@ -26,47 +47,45 @@ def main() -> None:
 
 @main.group()
 def spotify() -> None:
-    """Spotify playlist tools."""
+    """Spotify library tools."""
 
 
 @spotify.command()
-@click.option("--split", is_flag=True, help="One JSON file per playlist.")
-@click.option("--liked-songs", is_flag=True, help="Include liked songs.")
-@click.option("--html-report", is_flag=True, help="Generate an HTML report.")
-@click.option("--playlist-name", default=None, help="Export only this playlist.")
-def export(split: bool, liked_songs: bool, html_report: bool, playlist_name: str | None) -> None:
-    """Export Spotify playlists to JSON."""
-    from spotify.export import fetch_all_playlists, fetch_liked_songs
+@_handle_spotify_errors
+def pull() -> None:
+    """Pull your entire Spotify library and save to disk."""
+    from common.store import save_library
+    from spotify.export import fetch_library
 
-    click.echo("Fetching playlists from Spotify…")
-    playlists = fetch_all_playlists()
+    click.echo("Pulling full library from Spotify…")
+    library = fetch_library()
 
-    if playlist_name:
-        playlists = [p for p in playlists if p.name == playlist_name]
-        if not playlists:
-            click.echo(f"No playlist found with name '{playlist_name}'")
-            return
+    click.echo(
+        f"  {len(library.playlists)} playlists, "
+        f"{len(library.liked_songs)} liked songs, "
+        f"{len(library.saved_albums)} saved albums, "
+        f"{len(library.followed_artists)} followed artists"
+    )
 
-    click.echo(f"Fetched {len(playlists)} playlist(s)")
-
-    if liked_songs:
-        liked = fetch_liked_songs()
-        click.echo(f"Fetched {len(liked)} liked song(s)")
-
-    # TODO: write JSON output (split vs single), HTML report generation
-    click.echo("Export complete. (JSON/HTML serialisation not yet wired up)")
+    out = save_library(library)
+    click.echo(f"Library saved to {out}")
 
 
 @spotify.command()
+@_handle_spotify_errors
 def dedupe() -> None:
     """Find duplicate tracks within and across playlists."""
+    from common.store import load_library
     from spotify.dedupe import find_duplicates_across
-    from spotify.export import fetch_all_playlists
 
-    click.echo("Fetching playlists…")
-    playlists = fetch_all_playlists()
+    click.echo("Loading stored Spotify library…")
+    library = load_library("spotify")
 
-    dupes = find_duplicates_across(playlists)
+    if not library.playlists:
+        click.echo("No playlists found. Run 'spotify pull' first.")
+        return
+
+    dupes = find_duplicates_across(library.playlists)
     if not dupes:
         click.echo("No cross-playlist duplicates found.")
         return
@@ -79,27 +98,40 @@ def dedupe() -> None:
 
 
 @spotify.command("detect-albums")
+@_handle_spotify_errors
 def detect_albums() -> None:
     """Flag playlists that are really just full albums."""
-    from spotify.album_detect import check_playlist
-    from spotify.export import fetch_all_playlists
+    from common.store import load_library
+    from spotify.album_detect import analyse_playlist
 
-    click.echo("Fetching playlists…")
-    playlists = fetch_all_playlists()
+    click.echo("Loading stored Spotify library…")
+    library = load_library("spotify")
 
-    matches = []
-    for pl in playlists:
-        m = check_playlist(pl)
-        if m:
-            matches.append(m)
-
-    if not matches:
-        click.echo("No playlists look like standalone albums.")
+    if not library.playlists:
+        click.echo("No playlists found. Run 'spotify pull' first.")
         return
 
-    click.echo(f"{len(matches)} playlist(s) appear to be albums:\n")
-    for m in matches:
-        click.echo(f"  '{m.playlist_name}' → album '{m.album_name}' ({m.match_ratio:.0%} match)")
+    saved_album_ids = {
+        sa.album.service_id
+        for sa in library.saved_albums
+        if sa.album.service_id
+    }
+
+    for pl in library.playlists:
+        result = analyse_playlist(pl, saved_album_ids=saved_album_ids)
+        if not result.album_groups:
+            continue
+
+        click.echo(f"\n  '{pl.name}' ({pl.track_count} tracks):")
+        for ag in result.album_groups:
+            status = "complete" if ag.is_complete else f"{ag.match_ratio:.0%}"
+            in_library = " [in your library]" if ag.in_library else ""
+            click.echo(f"    • {ag.album_name} – {status}{in_library}")
+            if ag.missing_tracks:
+                names = ", ".join(ag.missing_tracks)
+                click.echo(f"      missing: {names}")
+        if result.loose_track_count:
+            click.echo(f"    + {result.loose_track_count} tracks not part of any detected album")
 
 
 # ── Migrate sub-commands (future) ────────────────────────────────────────────

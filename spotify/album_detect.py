@@ -1,74 +1,136 @@
-"""Detect playlists that are essentially just full albums."""
+"""Detect playlists that contain full or near-full albums.
+
+Analyses every album represented in a playlist, not just the most common one.
+Cross-references against the user's saved albums when available.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import defaultdict
+from dataclasses import dataclass, field
 
 from common.log import get_logger
 from common.models import Playlist
-from spotify import catalog
-from spotify.client import get_client
 
 log = get_logger(__name__)
 
+MINIMUM_ALBUM_TRACKS = 3
+
 
 @dataclass
-class AlbumMatch:
-    playlist_name: str
+class AlbumGroup:
+    """One album's presence within a playlist."""
+
     album_name: str
     album_id: str
-    match_ratio: float  # 0.0 – 1.0
+    album_total_tracks: int
+    present_track_ids: set[str] = field(default_factory=set)
+    missing_tracks: list[str] = field(default_factory=list)
+    in_library: bool = False
+
+    @property
+    def present_count(self) -> int:
+        return len(self.present_track_ids)
+
+    @property
+    def match_ratio(self) -> float:
+        if self.album_total_tracks == 0:
+            return 0.0
+        return self.present_count / self.album_total_tracks
+
+    @property
+    def is_complete(self) -> bool:
+        return self.present_count >= self.album_total_tracks > 0
 
 
-def _most_common_album_id(playlist: Playlist) -> str | None:
-    """Return the album service_id that appears most frequently in the playlist."""
-    counts: dict[str, int] = {}
-    for pt in playlist.tracks:
-        aid = pt.track.album.service_id if pt.track.album else None
-        if aid:
-            counts[aid] = counts.get(aid, 0) + 1
-    if not counts:
-        return None
-    return max(counts, key=counts.get)  # type: ignore[arg-type]
+@dataclass
+class PlaylistAnalysis:
+    """Full album-detection result for one playlist."""
+
+    playlist_name: str
+    playlist_id: str | None
+    total_tracks: int
+    album_groups: list[AlbumGroup] = field(default_factory=list)
+
+    @property
+    def loose_track_count(self) -> int:
+        """Tracks not accounted for by any detected album group."""
+        accounted = set()
+        for ag in self.album_groups:
+            accounted |= ag.present_track_ids
+        return self.total_tracks - len(accounted)
 
 
-def check_playlist(playlist: Playlist, threshold: float = 0.8) -> AlbumMatch | None:
-    """Return an AlbumMatch if ``playlist`` looks like a full album.
+def analyse_playlist(
+    playlist: Playlist,
+    threshold: float = 0.8,
+    saved_album_ids: set[str] | None = None,
+) -> PlaylistAnalysis:
+    """Analyse a playlist for album content.
 
-    ``threshold`` is the minimum fraction of album tracks that must appear in
-    the playlist (and vice-versa) to be considered a match.
+    Args:
+        playlist: The playlist to check.
+        threshold: Minimum fraction of an album's tracks that must be present
+            for the album to be included in the results.
+        saved_album_ids: Set of album service_ids that are in the user's
+            library.  Used to tag ``AlbumGroup.in_library``.
     """
-    album_id = _most_common_album_id(playlist)
-    if album_id is None:
-        return None
+    saved_album_ids = saved_album_ids or set()
 
-    album = catalog.get_album(album_id)
-    album_tracks = catalog.get_album_tracks(album_id)
+    # group playlist tracks by their album id
+    tracks_by_album: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    album_names: dict[str, str] = {}
+    album_totals: dict[str, int] = {}
 
-    if not album_tracks:
-        return None
+    for pt in playlist.tracks:
+        album = pt.track.album
+        if not album or not album.service_id:
+            continue
+        aid = album.service_id
+        tracks_by_album[aid].append((pt.track.service_id, pt.track.name))
+        album_names.setdefault(aid, album.name)
+        if album.total_tracks:
+            album_totals[aid] = album.total_tracks
 
-    album_track_ids = {t.service_id for t in album_tracks}
-    playlist_track_ids = {
-        pt.track.service_id
-        for pt in playlist.tracks
-        if pt.track.service_id
-    }
+    groups: list[AlbumGroup] = []
+    for aid, track_pairs in tracks_by_album.items():
+        total = album_totals.get(aid, 0)
+        if total < MINIMUM_ALBUM_TRACKS:
+            continue
 
-    overlap = album_track_ids & playlist_track_ids
-    ratio = len(overlap) / max(len(album_track_ids), 1)
+        present_ids = {tid for tid, _ in track_pairs}
+        ratio = len(present_ids) / total if total else 0.0
+        if ratio < threshold:
+            continue
 
-    if ratio >= threshold:
+        group = AlbumGroup(
+            album_name=album_names[aid],
+            album_id=aid,
+            album_total_tracks=total,
+            present_track_ids=present_ids,
+            in_library=aid in saved_album_ids,
+        )
+        # missing tracks can only be fully resolved if we have the album's
+        # track list from saved_albums; for now we note the count
+        missing_count = total - len(present_ids)
+        if missing_count > 0:
+            group.missing_tracks = [f"({missing_count} track(s) not in playlist)"]
+
+        groups.append(group)
+
+    groups.sort(key=lambda g: g.match_ratio, reverse=True)
+
+    if groups:
         log.info(
-            "Playlist '%s' matches album '%s' (%.0f%%)",
+            "Playlist '%s': found %d album(s) above %.0f%% threshold",
             playlist.name,
-            album.name,
-            ratio * 100,
+            len(groups),
+            threshold * 100,
         )
-        return AlbumMatch(
-            playlist_name=playlist.name,
-            album_name=album.name,
-            album_id=album_id,
-            match_ratio=ratio,
-        )
-    return None
+
+    return PlaylistAnalysis(
+        playlist_name=playlist.name,
+        playlist_id=playlist.service_id,
+        total_tracks=playlist.track_count,
+        album_groups=groups,
+    )
