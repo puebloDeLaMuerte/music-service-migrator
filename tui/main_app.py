@@ -130,6 +130,15 @@ class MigratorApp(App):
             group="view-switch",
         )
 
+    def exit(self, result=None, return_code: int = 0, message=None) -> None:
+        """Cancel worker tasks before shutdown (any code path that calls exit)."""
+        self.workers.cancel_all()
+        super().exit(result, return_code, message)
+
+    async def action_quit(self) -> None:
+        """Quit the app (exit hook cancels workers)."""
+        self.exit()
+
     # ── View switching ──────────────────────────────────────────────
 
     async def _do_switch_view(self, view_id: str, **kwargs) -> None:

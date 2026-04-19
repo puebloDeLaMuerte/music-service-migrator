@@ -9,7 +9,12 @@ from pathlib import Path
 from common.log import get_logger
 from common.models import Library, Playlist, PlaylistTrack
 from common.store import load_workspace, meta_dir, save_playlist
-from spotify.dedupe import Duplicate, duplicate_fingerprint, find_duplicates_across, playlist_track_key
+from common.duplicate_groups import (
+    Duplicate,
+    duplicate_fingerprint,
+    find_duplicates_across,
+    playlist_track_key,
+)
 
 log = get_logger(__name__)
 

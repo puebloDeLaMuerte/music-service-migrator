@@ -17,6 +17,11 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _loaded = False
 
 
+def project_root() -> Path:
+    """Repository root (directory containing ``common/``)."""
+    return _PROJECT_ROOT
+
+
 def _ensure_loaded() -> None:
     global _loaded
     if not _loaded:

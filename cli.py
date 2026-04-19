@@ -7,7 +7,7 @@ Usage:
     python cli.py data dedupe
     python cli.py data playlist2album [-p NAME]
     python cli.py data playlistimages
-    python cli.py tidal pull                  (future)
+    python cli.py tidal pull
     python cli.py tidal push                  (future)
 """
 
@@ -24,8 +24,8 @@ def _launch(initial: str = "svc-spotify", **kwargs) -> None:
     MigratorApp(initial=initial, **kwargs).run()
 
 
-def _handle_spotify_errors(func):
-    """Decorator that catches SpotifyAuthError and exits cleanly."""
+def _handle_service_errors(func):
+    """Decorator: auth errors from streaming adapters exit with a clear message."""
     import functools
 
     @functools.wraps(func)
@@ -34,8 +34,9 @@ def _handle_spotify_errors(func):
             return func(*args, **kwargs)
         except Exception as exc:
             from spotify.client import SpotifyAuthError
+            from tidal.client import TidalAuthError
 
-            if isinstance(exc, SpotifyAuthError):
+            if isinstance(exc, (SpotifyAuthError, TidalAuthError)):
                 click.secho(f"Error: {exc}", fg="red", err=True)
                 sys.exit(1)
             raise
@@ -60,14 +61,14 @@ def spotify() -> None:
 
 
 @spotify.command()
-@_handle_spotify_errors
+@_handle_service_errors
 def pull() -> None:
     """Pull your entire Spotify library and save to disk."""
     _launch("svc-spotify")
 
 
 @spotify.command()
-@_handle_spotify_errors
+@_handle_service_errors
 def push() -> None:
     """Push local changes back to Spotify."""
     _launch("svc-spotify")
@@ -114,12 +115,14 @@ def tidal() -> None:
 
 
 @tidal.command()
+@_handle_service_errors
 def pull() -> None:
     """Pull your entire Tidal library and save to disk."""
     _launch("svc-tidal")
 
 
 @tidal.command()
+@_handle_service_errors
 def push() -> None:
     """Push local library to Tidal."""
     _launch("svc-tidal")

@@ -333,12 +333,21 @@ def _workspace_meta_payload(library: Library) -> dict:
     }
 
 
-def save_workspace(library: Library, *, delete_orphan_playlists: bool = True) -> Path:
+def save_workspace(
+    library: Library,
+    *,
+    delete_orphan_playlists: bool = True,
+    workspace_root: Path | None = None,
+) -> Path:
     """Write the full library to disk; optionally remove playlist files not in ``library``.
 
-    Returns the workspace root path.
+    If ``workspace_root`` is set, data is written there instead of :func:`config.work_dir`
+    (used for timestamped backups under ``./backups/…``).
+
+    Returns the workspace root path used.
     """
-    root = _workspace_root()
+    root = (workspace_root if workspace_root is not None else _workspace_root()).resolve()
+    root.mkdir(parents=True, exist_ok=True)
     pl_dir = root / "playlists"
     pl_dir.mkdir(parents=True, exist_ok=True)
 

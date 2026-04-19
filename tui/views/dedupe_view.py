@@ -22,7 +22,7 @@ from data.dedupe_apply import (
     persist_playlists,
     reload_and_find_dupes,
 )
-from spotify.dedupe import Duplicate
+from common.duplicate_groups import Duplicate
 from tui.transient_status import TransientStatus
 from tui.views.base import BaseView
 from tui.views.p2a_view import ConfirmModal

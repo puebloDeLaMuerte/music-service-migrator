@@ -1,4 +1,4 @@
-```
+```text
         ~ ~ ~ ~ ~         ((( ((( (((
           p M i g r a t o r
         ~ ~ ~ ~ ~         ((( ((( (((
@@ -8,26 +8,32 @@
 
 # music-service-migrator
 
-**pMigrator** is a **local-first** toolkit for managing, inspecting, and migrating music libraries across streaming services. It gives you a **terminal UI** (and matching **CLI** commands) so your **OAuth tokens and library exports stay on your machine** — not in someone else’s cloud dashboard.
+A **toolkit for migrating library data between Spotify and Tidal**, with **extra features to inspect and clean up** the copies you keep on disk.
+
+**pMigrator** is **local-first**: a **terminal UI** plus **CLI** commands so **OAuth tokens and exports stay on your machine**, not in a third-party “migration service.”
 
 ---
 
 ## What it does
 
-- **Pull** your **Spotify** and/or **Tidal** library (playlists, liked tracks, saved albums, followed artists) into **JSON under your workspace** for backup and analysis.
-- **Browse** that data in the TUI: saved albums, artists, songs, playlists.
+**Across Spotify and Tidal** you can **pull** your library (playlists, liked tracks, saved albums, followed artists) to **JSON under your workspace**, then **browse** that data in the TUI.
+
 - **Dedupe** — find duplicate tracks within and across playlists.
-- **Playlist → Album** — detect when a playlist is really a full album and optionally extract it.
+- **Playlist → Album** — flag playlists that are really full albums; **find** those albums **in** playlists **and add them to your saved library as proper albums** (extract / extract+delete flows in the TUI).
 - **Images** — fetch playlist artwork at high resolution.
 - **Settings** — tune paths and behaviour without editing code.
 
-Spotify **push** / Tidal **push** and full cross-service **migration** are planned; **pull** and **local data** tools are the focus today.
+**Tidal:** **Import (pull) from Tidal** is implemented. **Push** back to Tidal is not the focus yet.
+
+**Spotify:** **Pull** is implemented; **push** is planned.
+
+**Cross-service migration** (moving playlists from one service to the other inside the app) is **planned**; today the emphasis is **pull**, **local JSON**, and **cleanup / analysis** tools.
 
 ---
 
 ## Why it exists
 
-Moving between Spotify, Tidal, and friends is a good moment to **clean up duplicates and odd playlists** — and to avoid handing **API access** to a third-party “migration as a service” if you’d rather **own the data and the credentials**. This project is built for that workflow: **you** create the developer / API access, **you** authenticate, **you** keep the files.
+Switching between Spotify and Tidal is a good moment to **dedupe and fix messy playlists** — and, if you prefer, to **keep API access and files under your control** instead of delegating to another company’s servers.
 
 ---
 
@@ -35,42 +41,44 @@ Moving between Spotify, Tidal, and friends is a good moment to **clean up duplic
 
 ### Accounts
 
-- A normal **Spotify** and/or **Tidal** **user account** (the same ones you use in the official apps).
-- For **Spotify API** use, Spotify currently expects the **developer app owner** to satisfy their product rules (e.g. **Premium** can matter for some API behaviour — see errors when you first pull).
+- **Spotify** and/or **Tidal** — the same consumer accounts you use in the official apps.
+- For **Spotify’s Web API**, their rules apply (e.g. **Premium** can matter for some endpoints — you’ll see clear errors on first pull if something blocks you).
 
-### Spotify — API app access
+### Spotify — API credentials (`.env`)
 
 1. Create an app in the **[Spotify Developer Dashboard](https://developer.spotify.com/dashboard)**.
 2. Note **Client ID** and **Client Secret**.
-3. Add a **Redirect URI** that matches what you put in `.env` (default in this project: `http://127.0.0.1:8000/callback`).
-4. Copy `.env.example` to `.env` and set:
+3. Add a **Redirect URI** matching `.env` (default: `http://127.0.0.1:8000/callback`).
+4. Copy `.env.example` to `.env` and set `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `SPOTIFY_REDIRECT_URI`.
 
-   - `SPOTIFY_CLIENT_ID`
-   - `SPOTIFY_CLIENT_SECRET`
-   - `SPOTIFY_REDIRECT_URI`
+First use runs **OAuth in the browser**; tokens are cached under your workspace (see `spotify/client.py` / `work/meta/`).
 
-The first time you use Spotify from the app, you’ll complete **OAuth in the browser**; tokens are stored under your workspace (see `spotify/client.py` / `work/meta/`).
+### Tidal — session file (`tidalapi`)
 
-More detail: [lib/my-spotify-playlists-downloader/docs/en/SPOTIFY_DEVELOPER_SETUP.md](lib/my-spotify-playlists-downloader/docs/en/SPOTIFY_DEVELOPER_SETUP.md) (vendored reference).
+Uses **[python-tidal](https://github.com/EbbLabs/python-tidal)** ([`tidalapi` on PyPI](https://pypi.org/project/tidalapi/)): **device login** writes a **JSON session** (default `<work_dir>/meta/tidal_session.json`). Override with **`TIDAL_SESSION_FILE`** in `.env` if you want another path.
 
-### Tidal — session file (tidalapi)
-
-Tidal uses **[python-tidal](https://github.com/EbbLabs/python-tidal)** ([`tidalapi` on PyPI](https://pypi.org/project/tidalapi/)) with a **device login** flow that writes a **JSON session file** (default: `<work_dir>/meta/tidal_session.json`).
-
-1. Complete a one-time login from a terminal (the TUI **Service** view can guide you; or run the snippet shown in `tidal/client.py` if you prefer the CLI).
-2. Optionally set **`TIDAL_SESSION_FILE`** in `.env` to override the path (project-relative or absolute).
-
-You need a **valid Tidal subscription** for catalog access; credentials are **not** sent to this project’s author — they stay in your session file.
+Complete login once (TUI **Service** view for Tidal, or the snippet in `tidal/client.py`). You need a **valid Tidal subscription** for catalog access.
 
 ### General
 
 - **Python 3.10+** recommended.
-- Dependencies: `pip install -r requirements.txt` (use a **virtualenv**, e.g. `.venv`).
+- `pip install -r requirements.txt` inside a **virtualenv** (e.g. `.venv`).
 
-Optional:
+Optional env: **`WORK_DIR`**, **`LOG_LEVEL`**, **`TUI_STATUS_FLASH_SECONDS`**, **`P2A_ALWAYS_KEEP_LEFTOVERS`** — see `.env.example` and `common/config.py`.
 
-- **`WORK_DIR`** — where JSON and metadata are stored (default `./work`).
-- **`LOG_LEVEL`**, **`TUI_STATUS_FLASH_SECONDS`**, **`P2A_ALWAYS_KEEP_LEFTOVERS`** — see `.env.example` and `common/config.py`.
+---
+
+## Developer setup (dashboards & first login)
+
+**Spotify** — step-by-step app registration, redirect URI, and dashboard settings:
+
+[lib/my-spotify-playlists-downloader/docs/en/SPOTIFY_DEVELOPER_SETUP.md](lib/my-spotify-playlists-downloader/docs/en/SPOTIFY_DEVELOPER_SETUP.md)
+
+**Tidal** — no Spotify-style “developer app” in the same sense; auth is **session file + device login** via `tidalapi`. Authoritative details (default paths, `TIDAL_SESSION_FILE`, interactive login, and a minimal one-shot login snippet) live in:
+
+[`tidal/client.py`](tidal/client.py)
+
+Use the **Tidal** screen in the TUI for guided login, or run the `python -c "…"` flow described there once so `tidal_session.json` exists before **Pull**.
 
 ---
 
@@ -85,10 +93,10 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
 pip install -r requirements.txt
 cp .env.example .env
-# Edit .env — at minimum Spotify vars if you use Spotify; configure Tidal session as above if you use Tidal.
+# Edit .env for Spotify if you use Spotify; complete Tidal session login if you use Tidal.
 
 python cli.py                 # full TUI (default)
-python cli.py spotify pull    # open TUI on Spotify with pull in mind
+python cli.py spotify pull
 python cli.py tidal pull
 python cli.py data dedupe
 python cli.py data playlist2album
@@ -103,9 +111,9 @@ python cli.py data playlistimages
 |------|------|
 | `cli.py` | Click CLI — launches the TUI or opens a specific screen |
 | `common/` | Shared models, config, storage paths, dedupe helpers |
-| `spotify/`, `tidal/` | Service adapters (auth + export/pull) |
+| `spotify/`, `tidal/` | Service adapters (auth + pull/export to disk) |
 | `tui/` | Textual UI — navigation, service views, tools |
-| `lib/my-spotify-playlists-downloader/` | Vendored docs (Spotify setup); not required at runtime for the current Python path |
+| `lib/my-spotify-playlists-downloader/` | Vendored **Spotify** setup docs; optional reference |
 
 ---
 
@@ -117,7 +125,7 @@ Built with [Textual](https://github.com/Textualize/textual), [Click](https://git
 
 ## License
 
-MIT
+No license is specified in this README; that is a deliberate project-level choice and not set here.
 
 ---
 

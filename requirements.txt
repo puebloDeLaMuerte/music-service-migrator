@@ -1,5 +1,11 @@
+# Install only into this repo’s virtualenv, never global site-packages:
+#   .venv/bin/python -m pip install -r requirements.txt
+
 # Spotify
 spotipy==2.26.0
+
+# TIDAL (https://github.com/EbbLabs/python-tidal — PyPI: tidalapi)
+tidalapi==0.8.11
 
 # Config
 python-dotenv>=1.1.1

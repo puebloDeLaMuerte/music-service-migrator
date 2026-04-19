@@ -11,9 +11,18 @@ from tui.views.base import BaseView
 _ABOUT_TEXT = (
     "Spotify sucks. Tidal probably sucks too, but i hear less so.\n\n"
     "I took the migration as an opportunity to clean up my collection a bit, "
-    "thought others might want such a tool too - after all this way we "
-    "don't have to give our access tokens to some other company...."
+    "thought others might want such a tool too..."
     "\n\n"
+    "[dim]Built with[/] "
+    '[link="https://github.com/Textualize/textual"]Textual[/], '
+    '[link="https://github.com/pallets/click"]Click[/], '
+    '[link="https://github.com/spotipy-dev/spotipy"]spotipy[/], '
+    '[link="https://github.com/EbbLabs/python-tidal"]python-tidal[/] '
+    '([link="https://pypi.org/project/tidalapi/"]tidalapi[/] on PyPI), '
+    '[link="https://github.com/theskumar/python-dotenv"]python-dotenv[/].\n'
+    "[dim]Reference / prior art[/] "
+    '[link="https://github.com/novama/my-spotify-playlists-downloader"]my-spotify-playlists-downloader[/] '
+    "(vendored under lib/ for Spotify setup docs).\n\n"
     "Philipp Tögel, 2026\n"
     "https://github.com/puebloDeLaMuerte/music-service-migrator"
 )
