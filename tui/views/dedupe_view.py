@@ -11,6 +11,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Label, ListItem, ListView, Static
 
+from common.dedupe_list_columns import dedupe_column_headers, permute_dedupe_row
 from data.dedupe_apply import (
     add_ignored_key,
     apply_remove_from_playlist,
@@ -162,12 +163,31 @@ class DedupeView(BaseView):
 
     def on_mount(self) -> None:
         self._dupes: list[Duplicate] = []
+        self._cached_dedupe_headers: tuple[str, ...] | None = None
         self._status_line = TransientStatus(self.query_one("#dedupe-status", Static))
         self._status_line.set_baseline("Loading…")
         table = self.query_one("#table", DataTable)
-        table.add_columns("Playlists", "Track", "Artists", "Positions")
+        self._sync_dedupe_columns(table)
         table.cursor_type = "cell"
         self.run_worker(self._do_task(), group="dedupe-task")
+
+    def _sync_dedupe_columns(self, table: DataTable) -> None:
+        headers = dedupe_column_headers()
+        if self._cached_dedupe_headers == headers:
+            return
+        table.clear(columns=True)
+        for h in headers:
+            table.add_column(h)
+        self._cached_dedupe_headers = headers
+
+    @staticmethod
+    def _canonical_dedupe_row(d: Duplicate) -> tuple[str, str, str, str]:
+        pl_names = ", ".join(sorted({name for name, _ in d.occurrences}))
+        positions = ", ".join(f"{name} #{pos}" for name, pos in d.occurrences)
+        return (pl_names, d.track_name, d.artists, positions)
+
+    def _display_dedupe_row(self, d: Duplicate) -> tuple[str, ...]:
+        return permute_dedupe_row(self._canonical_dedupe_row(d))
 
     def _selected_duplicate(self) -> Duplicate | None:
         table = self.query_one("#table", DataTable)
@@ -431,12 +451,11 @@ class DedupeView(BaseView):
         table = self.query_one("#table", DataTable)
         prev_row = int(table.cursor_row)
         prev_col = int(table.cursor_column)
+        self._sync_dedupe_columns(table)
         n_cols = len(table.ordered_columns)
         table.clear()
         for d in dupes:
-            pl_names = ", ".join(sorted({name for name, _ in d.occurrences}))
-            positions = ", ".join(f"{name} #{pos}" for name, pos in d.occurrences)
-            table.add_row(pl_names, d.track_name, d.artists, positions)
+            table.add_row(*self._display_dedupe_row(d))
         if not dupes:
             self._status_line.set_baseline(
                 "No cross-playlist duplicates left (or all hidden via Keep all)."
@@ -448,7 +467,7 @@ class DedupeView(BaseView):
                 r"\[i]/\[I] keep in / remove · \[o]/\[O] older / newer · \[a] keep all · "
                 r"↑↓ rows  ←→  ← actions"
             )
-            target_row = min(max(0, prev_row - 1), len(dupes) - 1)
+            target_row = min(max(0, prev_row), len(dupes) - 1) if prev_row >= 0 else 0
             target_col = min(max(0, prev_col), n_cols - 1) if n_cols else 0
 
             def _move_cursor() -> None:
@@ -471,6 +490,7 @@ class DedupeView(BaseView):
 
         self._dupes = dupes
         table = self.query_one("#table", DataTable)
+        self._sync_dedupe_columns(table)
 
         if not dupes:
             self._status_line.set_baseline(
@@ -479,9 +499,7 @@ class DedupeView(BaseView):
             return
 
         for d in dupes:
-            pl_names = ", ".join(sorted({name for name, _ in d.occurrences}))
-            positions = ", ".join(f"{name} #{pos}" for name, pos in d.occurrences)
-            table.add_row(pl_names, d.track_name, d.artists, positions)
+            table.add_row(*self._display_dedupe_row(d))
 
         self._status_line.set_baseline(
             r"  "

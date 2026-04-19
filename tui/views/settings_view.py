@@ -10,6 +10,16 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, Label, ListItem, ListView, Static, Switch
 
 from common.config import get, p2a_always_keep_leftovers, write_env_key
+from common.dedupe_list_columns import (
+    ENV_KEY as DEDUPE_COLUMNS_ENV_KEY,
+    default_column_order_csv as dedupe_default_column_order_csv,
+    validate_column_order_text as validate_dedupe_column_order_text,
+)
+from common.local_list_columns import (
+    default_column_order_csv,
+    kind_for_local_list_columns_env,
+    validate_column_order_text,
+)
 from tui.transient_status import TransientStatus
 from tui.views.base import BaseView
 
@@ -48,6 +58,42 @@ SETTINGS: tuple[_Setting, ...] = (
         "Log level",
         "string",
         "Python logging level (e.g. INFO, DEBUG, WARNING).",
+    ),
+    _Setting(
+        "LOCAL_LIST_COLUMNS_ALBUMS",
+        "Local list: albums columns",
+        "string",
+        "Comma-separated column ids (left→right). "
+        "Allowed: added, album, artists — default album,artists,added",
+    ),
+    _Setting(
+        "LOCAL_LIST_COLUMNS_ARTISTS",
+        "Local list: artists columns",
+        "string",
+        "Comma-separated column ids. Allowed: added, artist — default artist,added. "
+        "Added stays blank: Spotify does not expose when you followed each artist.",
+    ),
+    _Setting(
+        "LOCAL_LIST_COLUMNS_SONGS",
+        "Local list: songs columns",
+        "string",
+        "Comma-separated column ids. "
+        "Allowed: added, album, artists, track — default track,artists,album,added",
+    ),
+    _Setting(
+        "LOCAL_LIST_COLUMNS_PLAYLISTS",
+        "Local list: playlists columns",
+        "string",
+        "Comma-separated column ids. "
+        "Allowed: added, owner, playlist, tracks — default playlist,owner,tracks,added. "
+        "Added stays blank: Spotify does not expose when you added each playlist to your library.",
+    ),
+    _Setting(
+        "LOCAL_LIST_COLUMNS_DEDUPE",
+        "Dedupe list columns",
+        "string",
+        "Comma-separated column ids (left→right). "
+        "Allowed: artists, playlists, positions, track — default playlists,track,artists,positions",
     ),
 )
 
@@ -133,6 +179,17 @@ class SettingsView(BaseView):
 
     def _read_text_value(self, row: _Setting) -> str:
         key = row.env_key
+        kind = kind_for_local_list_columns_env(key)
+        if kind is not None:
+            raw = get(key, "") or ""
+            if not raw.strip():
+                return default_column_order_csv(kind)
+            return raw.strip()
+        if key == DEDUPE_COLUMNS_ENV_KEY:
+            raw = get(key, "") or ""
+            if not raw.strip():
+                return dedupe_default_column_order_csv()
+            return raw.strip()
         if key == "TUI_STATUS_FLASH_SECONDS":
             return get(key, "5") or "5"
         if key == "WORK_DIR":
@@ -194,6 +251,15 @@ class SettingsView(BaseView):
         if row.kind == "string" and row.env_key == "LOG_LEVEL":
             if not text:
                 return "Log level cannot be empty."
+        kind = kind_for_local_list_columns_env(row.env_key)
+        if kind is not None and text.strip():
+            err = validate_column_order_text(kind, text)
+            if err:
+                return err
+        if row.env_key == DEDUPE_COLUMNS_ENV_KEY and text.strip():
+            err = validate_dedupe_column_order_text(text)
+            if err:
+                return err
         return None
 
     def _serialize(self, row: _Setting, text: str) -> str:

@@ -3,26 +3,30 @@
 from __future__ import annotations
 
 import asyncio
-from typing import ClassVar, Literal
+from datetime import datetime
+from typing import ClassVar
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Label, ListItem, ListView, Static
 
+from common.local_list_columns import (
+    ListKind,
+    display_semantic_at,
+    local_list_column_headers,
+    permute_canonical_row_to_display,
+)
 from common.models import Library
 from common.store import load_workspace, save_workspace, save_workspace_auxiliary
 from tui.transient_status import TransientStatus
 from tui.views.base import BaseView
 from tui.views.p2a_view import ConfirmModal
 
-ListKind = Literal["albums", "artists", "songs", "playlists"]
-
 _KIND_META: dict[ListKind, dict] = {
     "albums": {
         "menu_title": "Saved albums",
         "table_title": "Albums",
-        "columns": ("Album", "Artists"),
         "empty": "No saved albums in the workspace. Run Spotify → Pull first.",
         "attr": "saved_albums",
         "label_fn": lambda sa: sa.album.name,
@@ -31,6 +35,7 @@ _KIND_META: dict[ListKind, dict] = {
             (
                 sa.album.name,
                 _fmt_artists(sa.album.artists),
+                _fmt_added(sa.saved_at),
             )
             for sa in lib.saved_albums
         ],
@@ -38,17 +43,18 @@ _KIND_META: dict[ListKind, dict] = {
     "artists": {
         "menu_title": "Saved artists",
         "table_title": "Artists",
-        "columns": ("Artist",),
         "empty": "No followed artists in the workspace. Run Spotify → Pull first.",
         "attr": "followed_artists",
         "label_fn": lambda fa: fa.artist.name,
         "confirm_prefix": "Remove artist",
-        "rows": lambda lib: [(fa.artist.name,) for fa in lib.followed_artists],
+        "rows": lambda lib: [
+            (fa.artist.name, _fmt_added(_followed_artist_added(fa)))
+            for fa in lib.followed_artists
+        ],
     },
     "songs": {
         "menu_title": "Saved songs",
         "table_title": "Songs",
-        "columns": ("Track", "Artists", "Album"),
         "empty": "No liked songs in the workspace. Run Spotify → Pull first.",
         "attr": "liked_songs",
         "label_fn": lambda pt: pt.track.name,
@@ -58,6 +64,7 @@ _KIND_META: dict[ListKind, dict] = {
                 pt.track.name,
                 _fmt_artists(pt.track.artists),
                 pt.track.album.name if pt.track.album else "",
+                _fmt_added(pt.added_at),
             )
             for pt in lib.liked_songs
         ],
@@ -65,13 +72,13 @@ _KIND_META: dict[ListKind, dict] = {
     "playlists": {
         "menu_title": "Playlists",
         "table_title": "Playlists",
-        "columns": ("Playlist", "Owner", "Tracks"),
         "empty": "No playlists in the workspace. Run Spotify → Pull first.",
         "attr": "playlists",
         "label_fn": lambda pl: pl.name,
         "confirm_prefix": "Remove playlist",
+        # Added column: Spotify does not expose per-playlist library date (see export).
         "rows": lambda lib: [
-            (pl.name, pl.owner or "", str(pl.track_count))
+            (pl.name, pl.owner or "", str(pl.track_count), _fmt_added(None))
             for pl in lib.playlists
         ],
     },
@@ -82,11 +89,40 @@ def _fmt_artists(artists) -> str:
     return ", ".join(a.name for a in artists) if artists else ""
 
 
+def _fmt_added(dt: datetime | None) -> str:
+    """ISO date (YYYY-MM-DD) for stable display and lexicographic sort."""
+    if dt is None:
+        return ""
+    return dt.date().isoformat()
+
+
+def _followed_artist_added(fa) -> datetime | None:
+    """Follow date only if we stored it (Spotify does not send it on followed-artists)."""
+    return fa.followed_at
+
+
+def _cell_sort_key(row: tuple, col: int, kind: ListKind) -> tuple:
+    """Key for stable sort (second pass); numeric tracks; ISO dates for Added."""
+    cell = row[col] if col < len(row) else ""
+    sem = display_semantic_at(kind, col)
+    if sem == "added":
+        if not (cell or "").strip():
+            return (2, "")
+        return (0, cell.casefold())
+    if kind == "playlists" and sem == "tracks":
+        try:
+            return (0, int(cell))
+        except ValueError:
+            return (1, cell.casefold())
+    return (0, cell.casefold())
+
+
 class LocalLibraryListView(BaseView):
     """One of: saved albums, followed artists, liked songs — read from local JSON."""
 
     BINDINGS: ClassVar = [
         Binding("r", "remove", show=False, priority=True),
+        Binding("s", "sort", show=False, priority=True),
     ]
 
     DEFAULT_CSS = """
@@ -105,7 +141,7 @@ class LocalLibraryListView(BaseView):
         background: $surface;
     }
     #local-col-actions {
-        width: 22;
+        width: 24;
         border-right: solid $primary-background-lighten-2;
     }
     #local-col-actions #local-actions { height: 1fr; }
@@ -126,6 +162,9 @@ class LocalLibraryListView(BaseView):
             raise ValueError(f"Unknown list kind: {kind!r}")
         self._kind = kind
         self._meta = _KIND_META[kind]
+        # 0 = file order; 1..2n = cycle col (k-1)//2 asc/desc by (k-1)%2
+        self._sort_phase: int = 0
+        self._row_to_lib_index: list[int] = []
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="local-main"):
@@ -134,6 +173,7 @@ class LocalLibraryListView(BaseView):
                 yield Static("", classes="local-col-gap")
                 yield ListView(
                     ListItem(Label(r"  \[r] Remove")),
+                    ListItem(Label(r"  \[s] Sort")),
                     id="local-actions",
                 )
             with Vertical(id="local-col-table"):
@@ -144,16 +184,26 @@ class LocalLibraryListView(BaseView):
 
     def on_mount(self) -> None:
         self._lib: Library | None = None
+        self._cached_table_headers: tuple[str, ...] | None = None
         self._status = TransientStatus(self.query_one("#local-status", Static))
         self._status.set_baseline("Loading…")
         table = self.query_one("#local-table", DataTable)
-        for c in self._meta["columns"]:
-            table.add_column(c)
+        self._sync_table_columns(table)
         table.cursor_type = "cell"
         self.run_worker(self._load_task(), group="local-list-load")
 
     def _rows_for_table(self, lib: Library) -> list[tuple]:
-        return list(self._meta["rows"](lib))
+        canonical = list(self._meta["rows"](lib))
+        return [permute_canonical_row_to_display(tuple(r), self._kind) for r in canonical]
+
+    def _sync_table_columns(self, table: DataTable) -> None:
+        headers = local_list_column_headers(self._kind)
+        if self._cached_table_headers == headers:
+            return
+        table.clear(columns=True)
+        for h in headers:
+            table.add_column(h)
+        self._cached_table_headers = headers
 
     def _list_len(self, lib: Library) -> int:
         return len(getattr(lib, self._meta["attr"]))
@@ -173,8 +223,20 @@ class LocalLibraryListView(BaseView):
             self._status.set_baseline(f"Error: {exc}")
             return
 
+        self._sort_phase = 0
         self._lib = lib
         self._fill_table(lib)
+
+    def _sort_status_fragment(self) -> str:
+        if self._sort_phase == 0:
+            return "file order"
+        k = self._sort_phase - 1
+        col = k // 2
+        desc = (k % 2) == 1
+        headers = local_list_column_headers(self._kind)
+        name = headers[col]
+        arrow = "↓" if desc else "↑"
+        return f"{name} {arrow}"
 
     def _fill_table(self, lib: Library) -> None:
         table = self.query_one("#local-table", DataTable)
@@ -182,18 +244,37 @@ class LocalLibraryListView(BaseView):
         prev_col = int(table.cursor_column)
         n_cols = len(table.ordered_columns)
         table.clear()
-        rows = self._rows_for_table(lib)
-        for row in rows:
-            table.add_row(*row)
-        n = len(rows)
+        raw_rows = self._rows_for_table(lib)
+        n = len(raw_rows)
         if n == 0:
+            self._row_to_lib_index = []
             self._status.set_baseline(f"  {self._meta['empty']}")
             return
+
+        if self._sort_phase > 0:
+            k = self._sort_phase - 1
+            col = k // 2
+            desc = (k % 2) == 1
+            paired = list(zip(raw_rows, range(n)))
+            paired.sort(key=lambda p: p[1])
+            paired.sort(
+                key=lambda p: _cell_sort_key(p[0], col, self._kind),
+                reverse=desc,
+            )
+            rows = [p[0] for p in paired]
+            self._row_to_lib_index = [p[1] for p in paired]
+        else:
+            rows = raw_rows
+            self._row_to_lib_index = list(range(n))
+
+        for row in rows:
+            table.add_row(*row)
+        sort_hint = self._sort_status_fragment()
         self._status.set_baseline(
-            f"  {n} row(s)  ·  "
-            + r"\[r] remove  ·  ↑↓ ←→  ·  ← actions"
+            f"  {n} row(s)  ·  {sort_hint}  ·  "
+            + r"\[r] remove  ·  \[s] sort  ·  ↑↓ ←→  ·  ← actions"
         )
-        target_row = min(max(0, prev_row - 1), n - 1) if prev_row >= 0 else 0
+        target_row = min(max(0, prev_row), n - 1) if prev_row >= 0 else 0
         target_col = min(max(0, prev_col), n_cols - 1) if n_cols else 0
 
         def _move() -> None:
@@ -207,9 +288,9 @@ class LocalLibraryListView(BaseView):
         r = table.cursor_row
         if self._lib is None or r is None or r < 0:
             return None
-        if r >= self._list_len(self._lib):
+        if r >= len(self._row_to_lib_index):
             return None
-        return r
+        return self._row_to_lib_index[r]
 
     # ── Zone navigation ────────────────────────────────────────────
 
@@ -240,16 +321,26 @@ class LocalLibraryListView(BaseView):
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         if event.list_view.id == "local-actions":
-            self._status.flash(
-                r"  [yellow]\[r] Remove: drop this row from the saved export on disk "
-                r"(Spotify is unchanged until you push).[/]"
-            )
+            idx = event.list_view.index
+            if idx == 0:
+                self._status.flash(
+                    r"  [yellow]\[r] Remove: drop this row from the saved export on disk "
+                    r"(Spotify is unchanged until you push).[/]"
+                )
+            elif idx == 1:
+                self._status.flash(
+                    r"  [yellow]\[s] Sort: cycle each column A→Z / Z→A, then back to file order.[/]"
+                )
             event.stop()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.list_view.id != "local-actions":
             return
-        self.action_remove()
+        idx = event.list_view.index
+        if idx == 0:
+            self.action_remove()
+        elif idx == 1:
+            self.action_sort()
         event.stop()
 
     def action_remove(self) -> None:
@@ -268,6 +359,17 @@ class LocalLibraryListView(BaseView):
             "Press [bold]y[/] to confirm or [bold]n[/] / ESC to cancel."
         )
         self.app.push_screen(ConfirmModal(body), lambda ok: self._on_remove_ok(ok))
+
+    def action_sort(self) -> None:
+        if self._lib is None:
+            self._status.flash("  [yellow]Still loading…[/]")
+            return
+        n = self._list_len(self._lib)
+        if n == 0:
+            return
+        n_cols = len(local_list_column_headers(self._kind))
+        self._sort_phase = (self._sort_phase + 1) % (2 * n_cols + 1)
+        self._fill_table(self._lib)
 
     def _on_remove_ok(self, ok: bool) -> None:
         if not ok or self._lib is None:

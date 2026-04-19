@@ -160,6 +160,18 @@ def fetch_playlist_tracks(playlist_id: str) -> list[PlaylistTrack]:
 
 
 def fetch_all_playlists() -> list[Playlist]:
+    """Fetch every playlist and its tracks.
+
+    Spotify’s **Get Current User’s Playlists** response uses simplified playlist
+    objects: they do **not** include when you added each playlist to your
+    library. ``record_meta_for_pull`` only records our sync time — the same for
+    every playlist pulled in one run up to **date** granularity — so that must
+    never be shown as “date added” in the UI.
+
+    Per-track ``added_at`` exists on **playlist items**, but that is when each
+    *track* was added to the playlist, not when the playlist appeared in your
+    library.
+    """
     from spotipy.exceptions import SpotifyException
 
     sp = get_client()
@@ -200,6 +212,7 @@ def fetch_all_playlists() -> list[Playlist]:
 
 
 def fetch_liked_songs() -> list[PlaylistTrack]:
+    """Each saved-track wrapper includes ``added_at`` (when the track was liked)."""
     sp = get_client()
     row_meta = record_meta_for_pull(SERVICE)
     items = _paginate(sp.current_user_saved_tracks(limit=50), sp)
@@ -232,6 +245,7 @@ def _parse_album_track(t: dict) -> Track:
 
 
 def fetch_saved_albums() -> list[SavedAlbum]:
+    """Each saved-album item includes ``added_at`` (when the album was saved)."""
     sp = get_client()
     items = _paginate(sp.current_user_saved_albums(limit=50), sp)
     albums: list[SavedAlbum] = []
@@ -255,6 +269,13 @@ def fetch_saved_albums() -> list[SavedAlbum]:
 
 
 def fetch_followed_artists() -> list[FollowedArtist]:
+    """Fetch artists the user follows.
+
+    **Get User’s Followed Artists** returns plain ``Artist`` objects with no
+    wrapper and **no** “followed at” timestamp — the Web API does not expose
+    when you followed each artist. We therefore leave ``followed_at`` unset
+    unless we add another source later.
+    """
     sp = get_client()
     artists: list[FollowedArtist] = []
     result = sp.current_user_followed_artists(limit=50)
