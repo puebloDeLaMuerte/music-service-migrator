@@ -23,7 +23,7 @@ A **toolkit for migrating library data between Spotify and Tidal**, with **extra
 - **Images** — fetch playlist artwork.
 - **Settings** — tune paths and behaviour without editing code.
 
-**Tidal:** **Import (pull) from Tidal** is implemented. **Push** back to Tidal is not the focus yet.
+**Tidal:** **Import (pull) from Tidal** is implemented. **Push** back to Tidal is pending.
 
 **Spotify:** **Pull** is implemented; **push** is planned.
 
