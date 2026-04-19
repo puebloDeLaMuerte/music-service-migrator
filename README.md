@@ -20,7 +20,7 @@ A **toolkit for migrating library data between Spotify and Tidal**, with **extra
 
 - **Dedupe** — find duplicate tracks within and across playlists.
 - **Playlist → Album** — flag playlists that are really full albums; **find** those albums **in** playlists **and add them to your saved library as proper albums** (extract / extract+delete flows in the TUI).
-- **Images** — fetch playlist artwork at high resolution.
+- **Images** — fetch playlist artwork.
 - **Settings** — tune paths and behaviour without editing code.
 
 **Tidal:** **Import (pull) from Tidal** is implemented. **Push** back to Tidal is not the focus yet.
