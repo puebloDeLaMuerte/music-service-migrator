@@ -42,6 +42,7 @@ output*/
 work/
 logs/
 playlists/
+backups/
 
 # OS junk
 .DS_Store
