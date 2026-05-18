@@ -11,7 +11,7 @@ from tui.views.base import BaseView
 _ABOUT_TEXT = (
     "Spotify sucks. Tidal probably sucks too, but i hear less so.\n\n"
     "I took the migration as an opportunity to clean up my collection a bit, "
-    "thought others might want such a tool too..."
+    "thought others might want such a tool as well..."
     "\n\n"
     "[dim]Built with[/] "
     '[link="https://github.com/Textualize/textual"]Textual[/], '

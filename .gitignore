@@ -39,10 +39,16 @@ htmlcov/
 
 # Output from tools
 output*/
+# Workspace / local library (WORK_DIR in .env; default ./work)
 work/
+workspot/
 logs/
 playlists/
 backups/
+
+# Auth caches under any WORK_DIR inside the repo (do not commit)
+**/meta/spotify_token.json
+**/meta/tidal_session.json
 
 # OS junk
 .DS_Store
