@@ -22,6 +22,7 @@ from common.store import load_workspace, save_workspace, save_workspace_auxiliar
 from tui.transient_status import TransientStatus
 from tui.views.base import BaseView
 from tui.views.p2a_view import ConfirmModal
+from tui.views.playlist_tracks_modal import PlaylistTracksModal
 
 _KIND_META: dict[ListKind, dict] = {
     "albums": {
@@ -123,6 +124,7 @@ class LocalLibraryListView(BaseView):
     BINDINGS: ClassVar = [
         Binding("r", "remove", show=False, priority=True),
         Binding("s", "sort", show=False, priority=True),
+        Binding("l", "list_tracks", show=False, priority=True),
     ]
 
     DEFAULT_CSS = """
@@ -171,11 +173,13 @@ class LocalLibraryListView(BaseView):
             with Vertical(id="local-col-actions"):
                 yield Static("Actions", classes="local-col-title")
                 yield Static("", classes="local-col-gap")
-                yield ListView(
+                items = [
                     ListItem(Label(r"  \[r] Remove")),
                     ListItem(Label(r"  \[s] Sort")),
-                    id="local-actions",
-                )
+                ]
+                if self._kind == "playlists":
+                    items.append(ListItem(Label(r"  \[l] List tracks")))
+                yield ListView(*items, id="local-actions")
             with Vertical(id="local-col-table"):
                 yield Static(self._meta["table_title"], classes="local-col-title")
                 yield Static("", classes="local-col-gap")
@@ -270,9 +274,13 @@ class LocalLibraryListView(BaseView):
         for row in rows:
             table.add_row(*row)
         sort_hint = self._sort_status_fragment()
+        action_keys = (
+            r"\[r] remove  ·  \[s] sort  ·  \[l] list tracks"
+            if self._kind == "playlists"
+            else r"\[r] remove  ·  \[s] sort"
+        )
         self._status.set_baseline(
-            f"  {n} row(s)  ·  {sort_hint}  ·  "
-            + r"\[r] remove  ·  \[s] sort  ·  ↑↓ ←→  ·  ← actions"
+            f"  {n} row(s)  ·  {sort_hint}  ·  {action_keys}  ·  ↑↓ ←→  ·  ← actions"
         )
         target_row = min(max(0, prev_row), n - 1) if prev_row >= 0 else 0
         target_col = min(max(0, prev_col), n_cols - 1) if n_cols else 0
@@ -331,6 +339,11 @@ class LocalLibraryListView(BaseView):
                 self._status.flash(
                     r"  [yellow]\[s] Sort: cycle each column A→Z / Z→A, then back to file order.[/]"
                 )
+            elif idx == 2 and self._kind == "playlists":
+                self._status.flash(
+                    r"  [yellow]\[l] List tracks: open tracks from the local playlist export "
+                    r"(no API).[/]"
+                )
             event.stop()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
@@ -341,6 +354,8 @@ class LocalLibraryListView(BaseView):
             self.action_remove()
         elif idx == 1:
             self.action_sort()
+        elif idx == 2 and self._kind == "playlists":
+            self.action_list_tracks()
         event.stop()
 
     def action_remove(self) -> None:
@@ -370,6 +385,19 @@ class LocalLibraryListView(BaseView):
         n_cols = len(local_list_column_headers(self._kind))
         self._sort_phase = (self._sort_phase + 1) % (2 * n_cols + 1)
         self._fill_table(self._lib)
+
+    def action_list_tracks(self) -> None:
+        if self._kind != "playlists":
+            return
+        if self._lib is None:
+            self._status.flash("  [yellow]Still loading…[/]")
+            return
+        idx = self._current_index()
+        if idx is None:
+            self._status.flash("  [yellow]Select a playlist row first.[/]")
+            return
+        pl = self._lib.playlists[idx]
+        self.app.push_screen(PlaylistTracksModal(pl))
 
     def _on_remove_ok(self, ok: bool) -> None:
         if not ok or self._lib is None:

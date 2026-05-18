@@ -17,6 +17,7 @@ from textual.widgets import Label, ListItem, ListView, Static
 from common.config import p2a_always_keep_leftovers
 from tui.transient_status import TransientStatus
 from tui.views.base import BaseView
+from tui.views.playlist_tracks_modal import PlaylistTracksModal
 
 
 # ── List row metadata ───────────────────────────────────────────────────────
@@ -116,6 +117,7 @@ _ACTION_METHODS = [
     "action_extract_delete",
     "action_extract_keep",
     "action_keep",
+    "action_list_tracks",
 ]
 
 # One-line status tooltips when an action row is highlighted (Rich markup).
@@ -125,6 +127,8 @@ _P2A_ACTION_TOOLTIPS: tuple[str, ...] = (
     r"  [yellow]\[v] Extract+keep: write album(s) to saved library; playlist file stays "
     r"unchanged (tracks remain listed).[/]",
     r"  [yellow]\[n] Keep: do nothing to disk for this selection—pick another row or action.[/]",
+    r"  [yellow]\[l] List tracks: browse tracks from the local playlist export (full playlist "
+    r"or album slice if an album row is selected).[/]",
 )
 
 
@@ -136,6 +140,8 @@ class P2AView(BaseView):
         Binding("d", "extract_delete", show=False),
         Binding("v", "extract_keep", show=False),
         Binding("n", "keep", show=False),
+        # Must be "list_tracks" — Textual maps to action_list_tracks (not "action_list_tracks").
+        Binding("l", "list_tracks", show=False, priority=True),
     ]
 
     DEFAULT_CSS = """
@@ -213,6 +219,7 @@ class P2AView(BaseView):
                     ListItem(Label(r"  \[d] Extract+delete")),
                     ListItem(Label(r"  \[v] Extract+keep")),
                     ListItem(Label(r"  \[n] Keep")),
+                    ListItem(Label(r"  \[l] List tracks")),
                     id="p2a-actions",
                 )
             with Vertical(id="p2a-col-detail"):
@@ -325,6 +332,9 @@ class P2AView(BaseView):
                 f"\n  + [yellow]{result.loose_track_count}[/] loose tracks "
                 "(not part of a detected album above)"
             )
+        lines.append(
+            "\n[dim]\\[l] List tracks — from local export (full playlist or album row scope)[/]"
+        )
         self.query_one("#detail", Static).update("\n".join(lines))
 
     # ── Data loading ──────────────────────────────────────────────
@@ -401,7 +411,8 @@ class P2AView(BaseView):
         n = len(self._results)
         self._status_line.set_baseline(
             f"  {n} playlist(s) with album groups  ·  "
-            r"\[d] remove from playlist  ·  \[v] keep in playlist  ·  \[n] leave unchanged"
+            r"\[d] remove from playlist  ·  \[v] keep in playlist  ·  "
+            r"\[n] leave unchanged  ·  \[l] list tracks"
         )
 
     # ── Actions ───────────────────────────────────────────────────
@@ -422,6 +433,26 @@ class P2AView(BaseView):
             return
         self._status_line.set_baseline(
             "  No changes — select another row or action."
+        )
+
+    def action_list_tracks(self) -> None:
+        row = self._current_row()
+        if row is None or not self._results:
+            self._status_line.flash(
+                "  [yellow]Select a playlist or album row in the left list first.[/]"
+            )
+            return
+        pl, result = self._results[row.p2a_playlist_idx]
+        if row.p2a_album_idx is None:
+            self.app.push_screen(PlaylistTracksModal(pl))
+            return
+        ag = result.album_groups[row.p2a_album_idx]
+        self.app.push_screen(
+            PlaylistTracksModal(
+                pl,
+                album_service_id=ag.album_id,
+                filter_heading=ag.album_name,
+            )
         )
 
     def action_extract_keep(self) -> None:

@@ -116,6 +116,16 @@ class MigratorApp(App):
         self._active_view: BaseView | None = None
         self._active_view_id: str = ""
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Let pushed screens (e.g. modals) receive arrow keys instead of zone navigation."""
+        if action in ("zone_left", "zone_right"):
+            try:
+                if len(self.get_screen_stack()) > 1:
+                    return False
+            except KeyError:
+                pass
+        return True
+
     def compose(self) -> ComposeResult:
         yield AppBanner()
         with Horizontal(id="body"):
