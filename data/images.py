@@ -109,3 +109,23 @@ def download_all_artwork(library: Library) -> tuple[int, int]:
             skipped += 1
 
     return downloaded, skipped
+
+
+def existing_artwork_path(
+    playlist: Playlist,
+    workspace_root: Path | None = None,
+) -> Path | None:
+    """Return a saved ``artwork.*`` file under the playlist’s ``_data`` folder, if present.
+
+    Matches how :func:`download_playlist_artwork` writes
+    ``<work_dir>/playlists/<name>_data/artwork.<ext>``.
+    """
+    if workspace_root is None:
+        workspace_root = config.work_dir()
+    folder = workspace_root / "playlists" / (sanitise_filename(playlist.name) + "_data")
+    if not folder.is_dir():
+        return None
+    for path in sorted(folder.glob("artwork.*")):
+        if path.is_file():
+            return path
+    return None
