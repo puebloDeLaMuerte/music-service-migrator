@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from common.album_detect import AlbumGroup
 from common.log import get_logger
 from common.models import Album, Playlist, PlaylistTrack, SavedAlbum, record_meta_for_app
 from common.store import (
@@ -16,7 +17,6 @@ from common.store import (
     meta_dir,
     save_playlist,
 )
-from spotify.album_detect import AlbumGroup
 
 log = get_logger(__name__)
 

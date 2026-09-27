@@ -20,7 +20,7 @@ from textual.widgets import Label, ListItem, ListView, RichLog, Static
 
 from common import config
 from common.catalog_adapters import CatalogPullAdapter, get_catalog_pull
-from tui.app import LogBridge
+from tui.app import LogBridge, LogHighlighter
 from tui.views.base import BaseView
 
 # https? URLs — tidalapi prints the login link as plain text; Rich link style enables
@@ -86,6 +86,7 @@ class LinkedRichLog(RichLog):
     def __init__(self, *args, **kwargs) -> None:
         kwargs.setdefault("wrap", True)
         super().__init__(*args, **kwargs)
+        self.highlighter = LogHighlighter()
 
     async def on_click(self, event: events.Click) -> None:
         link = getattr(event.style, "link", None)
@@ -115,16 +116,9 @@ class ServiceView(BaseView):
         height: 1;
         text-style: bold;
         color: $text;
-    }
-    .svc-col-gap { height: 1; }
-    #svc-col-menu .svc-col-title,
-    #svc-col-menu .svc-col-gap {
-        background: $surface;
-    }
-    #svc-col-right .svc-col-title,
-    #svc-col-right .svc-col-gap {
         background: $background;
     }
+    .svc-col-gap { height: 1; background: $background; }
     #svc-col-menu {
         width: 28;
         border-right: solid $primary-background-lighten-2;

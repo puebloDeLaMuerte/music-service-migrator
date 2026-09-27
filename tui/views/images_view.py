@@ -12,6 +12,7 @@ from textual.widgets import DataTable, Label, ListItem, ListView, RichLog, Stati
 
 from common.store import load_workspace
 from data.images import download_all_artwork, existing_artwork_path
+from tui.app import app_rich_log
 from tui.transient_status import TransientStatus
 from tui.views.base import BaseView
 
@@ -43,9 +44,9 @@ class ImagesView(BaseView):
         height: 1;
         text-style: bold;
         color: $text;
-        background: $surface;
+        background: $background;
     }
-    .img-col-gap { height: 1; background: $surface; }
+    .img-col-gap { height: 1; background: $background; }
     #img-col-actions {
         width: 28;
         border-right: solid $primary-background-lighten-2;
@@ -100,7 +101,7 @@ class ImagesView(BaseView):
                     with Vertical(id="img-detail-stack"):
                         yield Static("", id="img-intro", markup=True)
                         yield DataTable(id="img-table", zebra_stripes=True)
-                    yield RichLog(highlight=True, markup=True, id="img-log")
+                    yield app_rich_log(id="img-log")
         yield Static("", id="img-status", markup=True)
 
     def on_mount(self) -> None:

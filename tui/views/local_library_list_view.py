@@ -136,11 +136,11 @@ class LocalLibraryListView(BaseView):
         height: 1;
         text-style: bold;
         color: $text;
-        background: $surface;
+        background: $background;
     }
     .local-col-gap {
         height: 1;
-        background: $surface;
+        background: $background;
     }
     #local-col-actions {
         width: 24;

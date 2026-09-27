@@ -155,18 +155,10 @@ class P2AView(BaseView):
         height: 1;
         text-style: bold;
         color: $text;
+        background: $background;
     }
     .p2a-col-gap {
         height: 1;
-    }
-    #p2a-col-playlists .p2a-col-title,
-    #p2a-col-playlists .p2a-col-gap,
-    #p2a-col-actions .p2a-col-title,
-    #p2a-col-actions .p2a-col-gap {
-        background: $surface;
-    }
-    #p2a-col-detail .p2a-col-title,
-    #p2a-col-detail .p2a-col-gap {
         background: $background;
     }
     #p2a-col-playlists {
@@ -341,7 +333,7 @@ class P2AView(BaseView):
 
     async def _load_data(self) -> None:
         from common.store import load_workspace
-        from spotify.album_detect import analyse_playlist
+        from common.album_detect import analyse_playlist
 
         library = await asyncio.to_thread(load_workspace)
 

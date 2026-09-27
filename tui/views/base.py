@@ -8,7 +8,7 @@ from textual.app import ComposeResult
 from textual.containers import Container, Vertical
 from textual.widgets import RichLog, Static
 
-from tui.app import LogBridge
+from tui.app import LogBridge, app_rich_log
 
 
 class BaseView(Container):
@@ -34,11 +34,11 @@ class LogView(BaseView):
         height: 1;
         text-style: bold;
         color: $text;
-        background: $surface;
+        background: $background;
     }
     .log-col-gap {
         height: 1;
-        background: $surface;
+        background: $background;
     }
     #view-log { height: 1fr; }
     """
@@ -47,7 +47,7 @@ class LogView(BaseView):
         with Vertical():
             yield Static("Log", classes="log-col-title")
             yield Static("", classes="log-col-gap")
-            yield RichLog(highlight=True, markup=True, id="view-log")
+            yield app_rich_log(id="view-log")
 
     def _start_task(self) -> None:
         self.run_worker(self._do_task(), group="log-task")

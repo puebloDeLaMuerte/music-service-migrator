@@ -110,7 +110,7 @@ python cli.py data playlistimages
 | Path | Role |
 |------|------|
 | `cli.py` | Click CLI — launches the TUI or opens a specific screen |
-| `common/` | Shared models, config, storage paths, dedupe helpers |
+| `common/` | Shared models, config, storage paths, provider-agnostic analysis (dedupe, album detection) |
 | `spotify/`, `tidal/` | Service adapters (auth + pull/export to disk) |
 | `tui/` | Textual UI — navigation, service views, tools |
 | `lib/my-spotify-playlists-downloader/` | Vendored **Spotify** setup docs; optional reference |

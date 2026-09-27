@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import logging
+import re
 
+from rich.highlighter import Highlighter
+from rich.style import Style
+from rich.text import Text
 from textual.widgets import RichLog, Static
 
 APP_TITLE = "music-service-migrator"
 APP_THEME = "tokyo-night"
 
 _BLUE = "#7AA2F7"
+_CYAN = "#7DCFFF"
+_GREEN = "#9ECE6A"
 _PURPLE = "#BB9AF7"
 _ORANGE = "#FF9E64"
 _BG = "#1A1B26"
@@ -54,6 +60,35 @@ class AppBanner(Static):
         if self._subtitle:
             content += f"\n[dim]{' ' * 40}{self._subtitle}[/]"
         return content
+
+
+class LogHighlighter(Highlighter):
+    """Highlight paths, URLs and quoted names in log output.
+
+    Replaces Rich's ``ReprHighlighter``, whose magenta paths resolve to a red
+    tone in this theme; red is reserved for errors. Styles are concrete colours
+    rather than theme style names so they cannot be remapped by the ANSI theme.
+    """
+
+    _HIGHLIGHTS: tuple[tuple[re.Pattern[str], Style], ...] = (
+        (re.compile(r"'[^'\n]*'|\"[^\"\n]*\""), Style(color=_GREEN)),
+        (re.compile(r"(?:(?:~|\.{1,2})?/|\b[-\w.+@]+/)[-\w.+@/]*"), Style(color=_BLUE)),
+        (re.compile(r"https?://[^\s<>\"']+"), Style(color=_CYAN, underline=True)),
+    )
+
+    def highlight(self, text: Text) -> None:
+        plain = text.plain
+        for pattern, style in self._HIGHLIGHTS:
+            for match in pattern.finditer(plain):
+                text.stylize(style, match.start(), match.end())
+
+
+def app_rich_log(**kwargs) -> RichLog:
+    """RichLog wired to :class:`LogHighlighter` (markup + highlighting on)."""
+    kwargs.setdefault("markup", True)
+    log = RichLog(highlight=True, **kwargs)
+    log.highlighter = LogHighlighter()
+    return log
 
 
 class LogBridge(logging.Handler):

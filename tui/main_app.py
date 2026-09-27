@@ -58,11 +58,11 @@ class NavSidebar(Container):
         height: 1;
         text-style: bold;
         color: $text;
-        background: $surface;
+        background: $background;
     }
     #nav-col-gap {
         height: 1;
-        background: $surface;
+        background: $background;
     }
     #nav-list { height: 1fr; }
     .nav-header { color: $text-muted; height: 1; }

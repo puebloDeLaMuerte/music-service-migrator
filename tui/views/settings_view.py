@@ -108,11 +108,11 @@ class SettingsView(BaseView):
         height: 1;
         text-style: bold;
         color: $text;
-        background: $surface;
+        background: $background;
     }
     .settings-col-gap {
         height: 1;
-        background: $surface;
+        background: $background;
     }
     #settings-col-options {
         width: 1fr;

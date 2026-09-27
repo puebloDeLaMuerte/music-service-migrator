@@ -120,11 +120,11 @@ class DedupeView(BaseView):
         height: 1;
         text-style: bold;
         color: $text;
-        background: $surface;
+        background: $background;
     }
     .dedupe-col-gap {
         height: 1;
-        background: $surface;
+        background: $background;
     }
     #dedupe-status {
         dock: bottom;
