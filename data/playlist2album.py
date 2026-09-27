@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from common.album_detect import AlbumGroup
 from common.log import get_logger
 from common.models import Album, Playlist, PlaylistTrack, SavedAlbum, record_meta_for_app
+from common.push.sync_intent import record_playlist_removed, record_playlist_tracks_removed
 from common.store import (
     append_saved_albums,
     delete_playlist,
@@ -187,6 +188,15 @@ def apply_extract_once(
         delete_playlist(playlist.name)
         playlist_deleted = True
         outcome = "deleted (discarded remaining tracks)"
+
+    if playlist_deleted:
+        record_playlist_removed(playlist.name)
+    else:
+        remove_ids = set().union(*(ag.present_track_ids for ag in album_groups))
+        record_playlist_tracks_removed(
+            playlist.name,
+            [pt.track for pt in playlist.tracks if pt.track.service_id in remove_ids],
+        )
 
     detail = {
         "playlist": playlist.name,

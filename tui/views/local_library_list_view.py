@@ -212,8 +212,20 @@ class LocalLibraryListView(BaseView):
     def _list_len(self, lib: Library) -> int:
         return len(getattr(lib, self._meta["attr"]))
 
-    def _pop_at(self, lib: Library, index: int) -> None:
-        getattr(lib, self._meta["attr"]).pop(index)
+    def _pop_at(self, lib: Library, index: int):
+        return getattr(lib, self._meta["attr"]).pop(index)
+
+    def _record_removal(self, removed) -> None:
+        from common.push import sync_intent
+
+        if self._kind == "albums":
+            sync_intent.record_album_removed(removed.album)
+        elif self._kind == "artists":
+            sync_intent.record_artist_removed(removed.artist)
+        elif self._kind == "songs":
+            sync_intent.record_liked_removed([removed.track])
+        elif self._kind == "playlists":
+            sync_intent.record_playlist_removed(removed.name)
 
     def _describe_row(self, lib: Library, index: int) -> str:
         seq = getattr(lib, self._meta["attr"])
@@ -370,7 +382,8 @@ class LocalLibraryListView(BaseView):
         prefix = self._meta["confirm_prefix"]
         body = (
             f"[bold]{prefix}[/]\n\n[bold]{label}[/]\n\n"
-            "This updates your local export only (not Spotify).\n\n"
+            "This updates Local Data only. The removal is remembered, so a later "
+            "Push-delete can remove it on the service you push to.\n\n"
             "Press [bold]y[/] to confirm or [bold]n[/] / ESC to cancel."
         )
         self.app.push_screen(ConfirmModal(body), lambda ok: self._on_remove_ok(ok))
@@ -412,11 +425,12 @@ class LocalLibraryListView(BaseView):
             lib = load_workspace()
             if not (0 <= index < self._list_len(lib)):
                 raise IndexError("Row no longer valid; reload the view.")
-            self._pop_at(lib, index)
+            removed = self._pop_at(lib, index)
             if self._kind == "playlists":
                 save_workspace(lib)
             else:
                 save_workspace_auxiliary(lib)
+            self._record_removal(removed)
             return lib
 
         try:

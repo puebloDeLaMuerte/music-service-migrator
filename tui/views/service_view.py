@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
+from rich.markup import escape
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
@@ -97,15 +98,16 @@ class LinkedRichLog(RichLog):
                 event.stop()
 
 
-class ServiceView(BaseView):
-    """Menu indices: 0 pull, 1 push, 2 separator (disabled), 3 backup, 4 wipe, 5 login."""
+class SvcMenuItem(ListItem):
+    """Sidebar row with a stable action id (not menu index)."""
 
-    _IX_PULL = 0
-    _IX_PUSH = 1
-    _IX_SEP = 2
-    _IX_BACKUP = 3
-    _IX_WIPE = 4
-    _IX_LOGIN = 5
+    def __init__(self, action_id: str, label: str, *, disabled: bool = False) -> None:
+        self.action_id = action_id
+        super().__init__(Label(label, markup=True), disabled=disabled)
+
+
+class ServiceView(BaseView):
+    """Service actions: push mode (radio), data flow, local backup/wipe, account."""
 
     DEFAULT_CSS = """
     ServiceView { height: 1fr; width: 1fr; }
@@ -134,6 +136,7 @@ class ServiceView(BaseView):
         color: $surface;
     }
     #svc-col-menu #svc-menu { height: 1fr; }
+    #svc-menu > ListItem:disabled Label { color: $text-disabled; }
     #svc-col-right { width: 1fr; }
     #svc-detail {
         padding: 1 2;
@@ -159,25 +162,68 @@ class ServiceView(BaseView):
         self._service = service
         self._title = service.capitalize()
         self._op_active = False
+        from common.push.models import PushMode
+
+        self._push_mode = PushMode.ADD
+
+    def _mode_label(self, mode) -> str:
+        from common.push.models import PushMode
+
+        mark = r"\[*] " if self._push_mode == mode else r"\[ ] "
+        names = {
+            PushMode.ADD: "Push-Add",
+            PushMode.DELETE: "Push-Delete",
+            PushMode.WIPE: "Wipe-Push [dim](mirror)[/]",
+        }
+        return f"  {mark}{names[mode]}"
+
+    def _mode_title(self) -> str:
+        from common.push.report import MODE_TITLES
+
+        return MODE_TITLES[self._push_mode.value]
+
+    def _build_menu_items(self) -> list[SvcMenuItem]:
+        from common.push.models import PushMode
+
+        return [
+            SvcMenuItem("hdr_mode", "  [bold dim]— push mode —[/]", disabled=True),
+            SvcMenuItem("mode_add", self._mode_label(PushMode.ADD)),
+            SvcMenuItem("mode_delete", self._mode_label(PushMode.DELETE)),
+            SvcMenuItem("mode_wipe", self._mode_label(PushMode.WIPE)),
+            SvcMenuItem("sep_flow", " ", disabled=True),
+            SvcMenuItem("hdr_flow", "  [bold dim]— data flow —[/]", disabled=True),
+            SvcMenuItem("pull", "  Pull Now"),
+            SvcMenuItem("push_dry", "  Push (dry run)"),
+            SvcMenuItem("push_inspect", "  Inspect Push Plan", disabled=True),
+            SvcMenuItem("push_now", "  Push Now"),
+            SvcMenuItem("sep_backup", " ", disabled=True),
+            SvcMenuItem("backup", "  Backup"),
+            SvcMenuItem("wipe_remote", "  [red]Wipe[/]"),
+            SvcMenuItem("sep_account", " ", disabled=True),
+            SvcMenuItem("hdr_account", "  [bold dim]— account —[/]", disabled=True),
+            SvcMenuItem("login", "  Login"),
+        ]
+
+    def _refresh_menu_labels(self) -> None:
+        from common.push.models import PushMode
+
+        menu = self.query_one("#svc-menu", ListView)
+        for item in menu.children:
+            if not isinstance(item, SvcMenuItem):
+                continue
+            if item.action_id == "mode_add":
+                item.query_one(Label).update(self._mode_label(PushMode.ADD))
+            elif item.action_id == "mode_delete":
+                item.query_one(Label).update(self._mode_label(PushMode.DELETE))
+            elif item.action_id == "mode_wipe":
+                item.query_one(Label).update(self._mode_label(PushMode.WIPE))
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="svc-main"):
             with Vertical(id="svc-col-menu"):
                 yield Static("Actions", classes="svc-col-title")
                 yield Static("", classes="svc-col-gap")
-                yield ListView(
-                    ListItem(Label("  Pull Now")),
-                    ListItem(Label("  Push Now")),
-                    ListItem(
-                        Label(" "),
-                        disabled=True,
-                        classes="svc-menu-sep",
-                    ),
-                    ListItem(Label("  Backup")),
-                    ListItem(Label("  [red]Wipe[/]", markup=True)),
-                    ListItem(Label("  Login")),
-                    id="svc-menu",
-                )
+                yield ListView(*self._build_menu_items(), id="svc-menu")
             with Vertical(id="svc-col-right"):
                 yield Static("Details", id="svc-pane-title", classes="svc-col-title")
                 yield Static("", classes="svc-col-gap")
@@ -188,6 +234,7 @@ class ServiceView(BaseView):
     def on_mount(self) -> None:
         self._show_pull_warning()
         self._update_status()
+        self._refresh_inspect_availability()
 
     # ── Column navigation (called by MigratorApp) ─────────────────
 
@@ -226,21 +273,124 @@ class ServiceView(BaseView):
         )
         self.query_one("#svc-detail", Static).update(text)
 
-    def _show_push_warning(self) -> None:
+    def _push_mode_blurb(self) -> str:
+        from common.push.models import PushMode
+
+        t = self._title
+        if self._push_mode == PushMode.ADD:
+            return (
+                f"[bold]Push-Add[/] — adds everything in Local Data to {t}; nothing is "
+                f"removed there. Existing playlists keep tracks that are only on {t}."
+            )
+        if self._push_mode == PushMode.DELETE:
+            return (
+                f"[bold]Push-Delete[/] — like Push-Add, and also removes on {t} what you "
+                "removed locally (unliked songs, tracks taken out of playlists, removed "
+                "playlists, albums and artists). Unliking a song does not remove it "
+                "from playlists."
+            )
+        return (
+            f"[bold]Wipe-Push[/] — {t} becomes an exact copy of Local Data: anything on "
+            f"{t} that is not in Local Data is removed, piece by piece. Local files "
+            "and other services are untouched."
+        )
+
+    def _write_scope_hint(self) -> str:
+        if self._service != "spotify":
+            return ""
+        from spotify.client import token_lacks_push_scopes
+
+        if not token_lacks_push_scopes():
+            return ""
+        return (
+            "[yellow]Your Spotify sign-in predates write access. Use Account → Login "
+            "once before pushing.[/]\n\n"
+        )
+
+    def _show_push_dry_details(self) -> None:
         text = (
-            f"[bold]{self._title} — Push[/]\n\n"
-            "[yellow]⚠  Warning[/]\n"
-            "[bold yellow]This syncs your local library to "
-            f"{self._title} and cannot be undone from this app.[/]\n\n"
-            f"What you have stored on this machine will be sent to your "
-            f"{self._title} account. Playlists and other items on the "
-            "service will be created or updated to match your local data. "
-            "There is no automatic rollback.\n\n"
-            "Typical effects include:\n\n"
-            "  • New playlists created on the service\n"
-            "  • Existing playlists updated to match local files\n"
-            "  • Album / library changes you applied locally reflected online\n\n"
+            f"[bold]{self._title} — Push (dry run)[/]\n\n"
+            f"{self._write_scope_hint()}"
+            f"{self._push_mode_blurb()}\n\n"
+            "Source: everything under [bold]Local Data[/] in the sidebar.\n\n"
+            f"Reads your current {self._title} library and searches the catalog for "
+            f"every item. Nothing is changed on {self._title}. The report lists what "
+            "would change; items with several possible matches come first and must be "
+            "settled in [bold]Inspect Push Plan[/] before Push Now.\n\n"
+            "Press [bold]Enter[/] to run the dry run."
+        )
+        self.query_one("#svc-detail", Static).update(text)
+
+    def _show_push_inspect_details(self) -> None:
+        from common.push.planner import inspectable_plan
+        from tui.views.push_plan_modal import decision_rows
+
+        plan = inspectable_plan(self._service, self._push_mode)
+        head = f"[bold]{self._title} — Inspect Push Plan[/] ({self._mode_title()})\n\n"
+        if plan is None:
+            body = (
+                "No current dry run for this mode. Run [bold]Push (dry run)[/] first — "
+                "a plan no longer counts once Local Data changes."
+            )
+        else:
+            rows = decision_rows(plan)
+            pending = sum(1 for r in rows if r["status"] == "ambiguous")
+            state = (
+                f"[bold yellow]{pending} item(s) need your decision.[/]"
+                if pending
+                else "[green]Nothing is waiting for a decision.[/]"
+            )
+            body = (
+                f"{state}\n\n"
+                "Pick the right match for each item, or exclude it from pushing. "
+                "Earlier decisions are listed too and can be undone.\n\n"
+                "Press [bold]Enter[/] to open."
+            )
+        self.query_one("#svc-detail", Static).update(head + body)
+
+    def _show_push_now_details(self) -> None:
+        text = (
+            f"[bold]{self._title} — Push Now[/]\n\n"
+            f"{self._write_scope_hint()}"
+            f"{self._push_mode_blurb()}\n\n"
+            "Uses the last dry run for this mode. If Local Data, recorded removals, "
+            "your decisions or the matching rules changed since, it plans again first. "
+            "You see a summary and confirm before anything is written.\n\n"
+            "If a previous Push Now stopped midway, running it again continues where "
+            "it left off.\n\n"
             "Press [bold]Enter[/] to start."
+        )
+        self.query_one("#svc-detail", Static).update(text)
+
+    def _show_wipe_remote_details(self) -> None:
+        text = (
+            f"[bold red]{self._title} — Wipe[/]\n\n"
+            f"[bold red]Empties your {self._title} account library.[/]\n\n"
+            "Removes, piece by piece:\n"
+            "  • all playlists (yours are deleted, followed ones unfollowed)\n"
+            "  • liked songs\n"
+            "  • saved albums\n"
+            "  • followed artists\n\n"
+            "Local Data and other services are not touched. Afterwards, "
+            '"Resist" by Wipers is added to your liked songs.\n\n'
+            f"{self._write_scope_hint()}"
+            "Press [bold]Enter[/] to see what would be removed; you confirm before "
+            "anything happens."
+        )
+        self.query_one("#svc-detail", Static).update(text)
+
+    def _show_push_mode_pick_details(self, preview_mode=None) -> None:
+        from common.push.models import PushMode
+
+        mode = preview_mode or self._push_mode
+        saved = self._push_mode
+        self._push_mode = mode
+        blurb = self._push_mode_blurb()
+        self._push_mode = saved
+        text = (
+            f"[bold]{self._title} — Push mode[/]\n\n"
+            f"{blurb}\n\n"
+            "Press [bold]Enter[/] to select this mode ([*] marker)."
         )
         self.query_one("#svc-detail", Static).update(text)
 
@@ -261,15 +411,6 @@ class ServiceView(BaseView):
             "  • Saved albums\n"
             "  • Followed artists\n\n"
             "Press [bold]Enter[/] to start."
-        )
-        self.query_one("#svc-detail", Static).update(text)
-
-    def _show_wipe_details(self) -> None:
-        text = (
-            f"[bold red]{self._title} — Wipe[/]\n\n"
-            "[yellow]Not implemented yet.[/]\n\n"
-            "This action will eventually remove or reset local data for this "
-            "service; details will be added here."
         )
         self.query_one("#svc-detail", Static).update(text)
 
@@ -367,23 +508,40 @@ class ServiceView(BaseView):
 
     # ── Events ──────────────────────────────────────────────────────
 
+    def _menu_action_id(self, event: ListView.Highlighted | ListView.Selected) -> str | None:
+        item = event.item
+        if isinstance(item, SvcMenuItem):
+            return item.action_id
+        return None
+
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         if event.list_view.id != "svc-menu" or self._op_active:
             return
-        idx = event.list_view.index
-        if idx is None or idx == self._IX_SEP:
+        aid = self._menu_action_id(event)
+        if not aid or aid.startswith(("hdr_", "sep_")):
             return
-        # After Pull/Backup the log stays visible but _op_active is cleared; show details again.
+        from common.push.models import PushMode
+
         self._reveal_menu_detail_pane()
-        if idx == self._IX_PULL:
+        if aid == "pull":
             self._show_pull_warning()
-        elif idx == self._IX_PUSH:
-            self._show_push_warning()
-        elif idx == self._IX_BACKUP:
+        elif aid == "mode_add":
+            self._show_push_mode_pick_details(PushMode.ADD)
+        elif aid == "mode_delete":
+            self._show_push_mode_pick_details(PushMode.DELETE)
+        elif aid == "mode_wipe":
+            self._show_push_mode_pick_details(PushMode.WIPE)
+        elif aid == "push_dry":
+            self._show_push_dry_details()
+        elif aid == "push_inspect":
+            self._show_push_inspect_details()
+        elif aid == "push_now":
+            self._show_push_now_details()
+        elif aid == "backup":
             self._show_backup_details()
-        elif idx == self._IX_WIPE:
-            self._show_wipe_details()
-        elif idx == self._IX_LOGIN:
+        elif aid == "wipe_remote":
+            self._show_wipe_remote_details()
+        elif aid == "login":
             self._show_login_details()
         event.stop()
 
@@ -391,16 +549,31 @@ class ServiceView(BaseView):
         if event.list_view.id != "svc-menu" or self._op_active:
             event.stop()
             return
-        idx = event.list_view.index
-        if idx == self._IX_PULL:
+        aid = self._menu_action_id(event)
+        if not aid:
+            event.stop()
+            return
+        from common.push.models import PushMode
+
+        modes = {"mode_add": PushMode.ADD, "mode_delete": PushMode.DELETE, "mode_wipe": PushMode.WIPE}
+        if aid in modes:
+            self._push_mode = modes[aid]
+            self._refresh_menu_labels()
+            self._show_push_mode_pick_details()
+            self._refresh_inspect_availability()
+        elif aid == "pull":
             self._start_pull()
-        elif idx == self._IX_PUSH:
-            self._start_push()
-        elif idx == self._IX_BACKUP:
+        elif aid == "push_dry":
+            self._start_push_dry()
+        elif aid == "push_inspect":
+            self._start_push_inspect()
+        elif aid == "push_now":
+            self._start_push_now()
+        elif aid == "backup":
             self._start_backup()
-        elif idx == self._IX_WIPE:
-            self._start_wipe()
-        elif idx == self._IX_LOGIN:
+        elif aid == "wipe_remote":
+            self._start_wipe_remote()
+        elif aid == "login":
             self._start_login()
         event.stop()
 
@@ -439,15 +612,206 @@ class ServiceView(BaseView):
         self._switch_to_log()
         self.run_worker(self._do_catalog_pull(adapter, workspace_root=dest), group="svc-op")
 
-    def _start_wipe(self) -> None:
-        self.query_one("#svc-detail", Static).update(
-            f"[yellow]{self._title} wipe is not yet implemented.[/]"
-        )
+    # ── Push ────────────────────────────────────────────────────────
 
-    def _start_push(self) -> None:
-        self.query_one("#svc-detail", Static).update(
-            f"[yellow]{self._title} push is not yet implemented.[/]"
+    def _refresh_inspect_availability(self) -> None:
+        self.run_worker(self._do_refresh_inspect(), group="svc-inspect", exclusive=True)
+
+    async def _do_refresh_inspect(self) -> None:
+        from common.push.planner import inspectable_plan
+
+        try:
+            plan = await asyncio.to_thread(inspectable_plan, self._service, self._push_mode)
+        except Exception:
+            plan = None
+        for item in self.query_one("#svc-menu", ListView).children:
+            if isinstance(item, SvcMenuItem) and item.action_id == "push_inspect":
+                item.disabled = plan is None
+
+    def _log(self) -> LinkedRichLog:
+        return self.query_one("#svc-log", LinkedRichLog)
+
+    def _set_status(self, text: str) -> None:
+        self.query_one("#svc-status", Static).update(f"  {text}")
+
+    def _attach_log_bridge(self) -> logging.Handler:
+        bridge = LogBridge(self._log())
+        bridge.setFormatter(logging.Formatter("%(message)s"))
+        logging.getLogger().addHandler(bridge)
+        return bridge
+
+    def _write_push_error(self, exc: Exception) -> None:
+        from common.push.errors import PushError, PushErrorCode
+
+        log_widget = self._log()
+        if isinstance(exc, PushError):
+            log_widget.write(f"[bold red]{escape(exc.message)}[/]")
+            if exc.code == PushErrorCode.REMOTE_ERROR:
+                log_widget.write("Run Push Now again to continue where it stopped.")
+        else:
+            log_widget.write(f"[bold red]Error: {escape(str(exc))}[/]")
+
+    def _start_push_dry(self) -> None:
+        self._switch_to_log()
+        self.run_worker(self._do_push_dry(), group="svc-op")
+
+    def _start_push_inspect(self) -> None:
+        from common.push.planner import inspectable_plan
+        from tui.views.push_plan_modal import PushPlanModal
+
+        plan = inspectable_plan(self._service, self._push_mode)
+        if plan is None:
+            self._show_push_inspect_details()
+            self._refresh_inspect_availability()
+            return
+        self.app.push_screen(PushPlanModal(plan), self._after_inspect)
+
+    def _after_inspect(self, changed: bool | None) -> None:
+        self._reveal_menu_detail_pane()
+        if changed:
+            self.query_one("#svc-detail", Static).update(
+                f"[bold]{self._title} — Inspect Push Plan[/]\n\n"
+                "[green]Decisions saved.[/]\n\n"
+                "Run [bold]Push (dry run)[/] to see the updated plan, or go straight to "
+                "[bold]Push Now[/] — it plans again with your decisions first."
+            )
+        else:
+            self._show_push_inspect_details()
+
+    def _start_push_now(self) -> None:
+        self._switch_to_log()
+        self.run_worker(self._do_push_now(), group="svc-op")
+
+    def _start_wipe_remote(self) -> None:
+        self._switch_to_log()
+        self.run_worker(self._do_wipe_remote_plan(), group="svc-op")
+
+    async def _do_push_dry(self) -> None:
+        from common.push.planner import dry_run_push
+        from common.push.report import format_plan_report
+
+        log_widget = self._log()
+        log_widget.write(f"[bold]Push (dry run) → {self._title} · {self._mode_title()}[/]\n")
+        bridge = self._attach_log_bridge()
+        try:
+            plan = await asyncio.to_thread(dry_run_push, self._service, self._push_mode)
+            log_widget.write("")
+            log_widget.write(escape(format_plan_report(plan)))
+            self._set_status("Dry run complete.")
+        except Exception as exc:
+            self._write_push_error(exc)
+            self._set_status("Dry run failed.")
+        finally:
+            logging.getLogger().removeHandler(bridge)
+            self._op_active = False
+            self._update_status()
+            self._refresh_inspect_availability()
+
+    async def _do_push_now(self) -> None:
+        from common.push.planner import prepare_push
+        from common.push.report import confirm_summary, format_plan_report
+        from tui.views.p2a_view import ConfirmModal
+
+        log_widget = self._log()
+        log_widget.write(f"[bold]Push Now → {self._title} · {self._mode_title()}[/]\n")
+        bridge = self._attach_log_bridge()
+        try:
+            plan, refreshed = await asyncio.to_thread(prepare_push, self._service, self._push_mode)
+        except Exception as exc:
+            self._write_push_error(exc)
+            self._set_status("Push failed.")
+            return
+        finally:
+            logging.getLogger().removeHandler(bridge)
+            self._op_active = False
+            self._update_status()
+            self._refresh_inspect_availability()
+
+        if refreshed:
+            log_widget.write("Things changed since the last dry run — planned again:\n")
+            log_widget.write(escape(format_plan_report(plan)))
+        summary = plan.get("summary") or {}
+        if not summary.get("can_apply"):
+            log_widget.write(f"\n[bold yellow]{escape(summary.get('blocking_reason') or 'Blocked.')}[/]")
+            self._set_status("Push blocked — decisions needed.")
+            return
+        if not plan.get("operations"):
+            log_widget.write(f"\n[green]{self._title} already matches — nothing to change.[/]")
+            self._set_status("Nothing to push.")
+            return
+        body = (
+            f"[bold]Push Now → {self._title} · {self._mode_title()}[/]\n\n"
+            f"{escape(confirm_summary(plan))}\n\n"
+            f"Apply these changes to {self._title}?"
         )
+        self.app.push_screen(ConfirmModal(body), lambda ok: self._after_push_confirm(ok, plan))
+
+    async def _do_wipe_remote_plan(self) -> None:
+        from common.push.planner import dry_run_remote_wipe
+        from common.push.report import format_plan_report
+        from tui.views.p2a_view import ConfirmModal
+
+        log_widget = self._log()
+        log_widget.write(f"[bold]Wipe → {self._title}[/]\n")
+        bridge = self._attach_log_bridge()
+        try:
+            plan = await asyncio.to_thread(dry_run_remote_wipe, self._service)
+        except Exception as exc:
+            self._write_push_error(exc)
+            self._set_status("Wipe failed.")
+            return
+        finally:
+            logging.getLogger().removeHandler(bridge)
+            self._op_active = False
+            self._update_status()
+            self._refresh_inspect_availability()
+
+        log_widget.write(escape(format_plan_report(plan)))
+        rc = plan.get("removal_counts") or {}
+        body = (
+            f"[bold red]Wipe your {self._title} library?[/]\n\n"
+            f"{rc.get('playlists', 0)} playlists, {rc.get('liked_songs', 0)} liked songs, "
+            f"{rc.get('saved_albums', 0)} saved albums and {rc.get('followed_artists', 0)} "
+            f"followed artists will be removed from {self._title}.\n\n"
+            "This cannot be undone on the service. Local Data stays as it is."
+        )
+        self.app.push_screen(ConfirmModal(body), lambda ok: self._after_push_confirm(ok, plan))
+
+    def _after_push_confirm(self, ok: bool | None, plan: dict) -> None:
+        if not ok:
+            self._log().write(f"\nCancelled — nothing was changed on {self._title}.")
+            self._set_status("Cancelled.")
+            return
+        self._op_active = True
+        self._update_status()
+        self.run_worker(self._do_apply(plan), group="svc-op")
+
+    async def _do_apply(self, plan: dict) -> None:
+        from common.push.executor import execute_plan
+        from common.push.registry import get_push_backend
+
+        log_widget = self._log()
+        log_widget.write(f"\n[bold]Applying to {self._title}…[/]")
+
+        def progress(i: int, n: int, text: str) -> None:
+            self.app.call_from_thread(log_widget.write, escape(f"  step {i} of {n}: {text}"))
+
+        def run() -> dict:
+            return execute_plan(get_push_backend(self._service), plan, on_progress=progress)
+
+        bridge = self._attach_log_bridge()
+        try:
+            await asyncio.to_thread(run)
+            log_widget.write(f"\n[bold green]Done — {self._title} is updated.[/]")
+            self._set_status("Push complete.")
+        except Exception as exc:
+            self._write_push_error(exc)
+            self._set_status("Push stopped.")
+        finally:
+            logging.getLogger().removeHandler(bridge)
+            self._op_active = False
+            self._update_status()
+            self._refresh_inspect_availability()
 
     def _start_login(self) -> None:
         if self._service not in ("spotify", "tidal"):
@@ -580,3 +944,4 @@ class ServiceView(BaseView):
             # Always release the UI lock so the menu + detail pane work again after Pull/Backup.
             self._op_active = False
             self._update_status()
+            self._refresh_inspect_availability()

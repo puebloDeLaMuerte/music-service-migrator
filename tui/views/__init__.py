@@ -11,6 +11,7 @@ MENU: list[tuple[str, str]] = [
     ("Services", ""),
     ("Spotify", "svc-spotify"),
     ("Tidal", "svc-tidal"),
+    ("Local Files", "svc-local"),
     ("", "---"),
     ("Local Data", ""),
     ("Saved albums", "data-saved-albums"),
@@ -49,6 +50,10 @@ def create_view(view_id: str, **kwargs):
         return ServiceView("spotify")
     if view_id == "svc-tidal":
         return ServiceView("tidal")
+    if view_id == "svc-local":
+        from tui.views.local_files_view import LocalFilesView
+
+        return LocalFilesView()
     if view_id == "data-dedupe":
         return DedupeView()
     if view_id == "data-p2a":

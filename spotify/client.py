@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import webbrowser
 from contextlib import contextmanager
 from pathlib import Path
@@ -20,13 +21,23 @@ log = get_logger(__name__)
 
 _client: spotipy.Spotify | None = None
 
-SCOPE = " ".join([
+READ_SCOPES = [
     "user-read-private",
     "user-library-read",
     "user-follow-read",
     "playlist-read-private",
     "playlist-read-collaborative",
-])
+]
+
+# Required for push (re-authenticate after enabling write access).
+PUSH_SCOPES = [
+    "playlist-modify-public",
+    "playlist-modify-private",
+    "user-library-modify",
+    "user-follow-modify",
+]
+
+SCOPE = " ".join(READ_SCOPES + PUSH_SCOPES)
 
 
 class SpotifyAuthError(Exception):
@@ -36,6 +47,18 @@ class SpotifyAuthError(Exception):
 def token_cache_path() -> Path:
     """OAuth token file used by spotipy (under ``<work_dir>/meta``)."""
     return meta_dir() / "spotify_token.json"
+
+
+def token_lacks_push_scopes() -> bool:
+    """True when a cached token exists but was granted before write access was requested."""
+    path = token_cache_path()
+    if not path.exists():
+        return False
+    try:
+        granted = set((json.loads(path.read_text(encoding="utf-8")).get("scope") or "").split())
+    except (OSError, ValueError, AttributeError):
+        return False
+    return not set(PUSH_SCOPES) <= granted
 
 
 def reset_client_cache() -> None:

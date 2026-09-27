@@ -6,9 +6,11 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
+from common.version import __version__
 from tui.views.base import BaseView
 
 _ABOUT_TEXT = (
+    f"[bold]music-service-migrator[/] [dim]v{__version__}[/]\n\n"
     "Spotify sucks. Tidal probably sucks too, but i hear less so.\n\n"
     "I took the migration as an opportunity to clean up my collection a bit, "
     "thought others might want such a tool as well..."

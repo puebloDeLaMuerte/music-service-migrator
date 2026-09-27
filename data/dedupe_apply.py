@@ -8,6 +8,7 @@ from pathlib import Path
 
 from common.log import get_logger
 from common.models import Library, Playlist, PlaylistTrack
+from common.push.sync_intent import record_playlist_tracks_removed
 from common.store import load_workspace, meta_dir, save_playlist
 from common.duplicate_groups import (
     Duplicate,
@@ -95,12 +96,13 @@ def _reindex_positions(pl: Playlist) -> None:
 
 def _remove_matching_tracks(pl: Playlist, fp: str) -> bool:
     """Drop tracks matching ``fp``; return True if something was removed."""
-    before = len(pl.tracks)
+    removed = [pt.track for pt in pl.tracks if playlist_track_key(pt) == fp]
+    if not removed:
+        return False
     pl.tracks = [pt for pt in pl.tracks if playlist_track_key(pt) != fp]
-    if len(pl.tracks) != before:
-        _reindex_positions(pl)
-        return True
-    return False
+    _reindex_positions(pl)
+    record_playlist_tracks_removed(pl.name, removed)
+    return True
 
 
 def apply_keep_only_in_playlist(
