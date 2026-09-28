@@ -25,6 +25,7 @@ from common.push.matching import (
     Decision,
     Matcher,
     Scored,
+    artist_detail,
     decide,
     display_album,
     display_track,
@@ -96,6 +97,7 @@ class Resolver:
         self.cache = cache
         self.decisions = decisions
         self._artist_hints: dict[str, Counter[str]] = {}
+        self._local_albums: dict[str, dict[str, str]] = {}
         self._index_snapshot(snapshot)
 
     # ── Snapshot indexes ───────────────────────────────────────────
@@ -143,6 +145,18 @@ class Resolver:
         for name, aid in zip(names, ids):
             if name and aid:
                 self._artist_hints.setdefault(self.m.norm(name), Counter())[aid] += 1
+
+    def _note_local_album(self, title: str | None, artists: list[str]) -> None:
+        """Remember which releases Local Data holds per artist name.
+
+        Used to tell same-named artists apart: the one who made a record you
+        own is almost certainly the one you mean.
+        """
+        if not title:
+            return
+        for name in artists:
+            if name:
+                self._local_albums.setdefault(self.m.norm(name), {})[self.m.norm(title)] = title
 
     # ── Shared helpers ─────────────────────────────────────────────
 
@@ -220,6 +234,9 @@ class Resolver:
             if not (t.name or "").strip():
                 items[key] = PlanItem("track", key, label, "unavailable", message="No title.")
                 continue
+            self._note_local_album(
+                t.album.name if t.album else None, [a.name for a in t.artists]
+            )
             pre = self._pre_checks("track", key, label)
             if pre is not None:
                 items[key] = pre
@@ -300,6 +317,7 @@ class Resolver:
             key = album_key(a)
             if key in items:
                 continue
+            self._note_local_album(a.name, [x.name for x in a.artists])
             items[key] = self._resolve_one_album(a)
         return items
 
@@ -377,8 +395,56 @@ class Resolver:
             scored.append(Scored(ref=c.id, display=c.name, score=score, conflict=conflict, identity=c.id))
         item = self._settle("artist", key, label, decide(self.m, scored), "search")
         if item is not None:
+            if item.status == "ambiguous":
+                self._describe_artists(item, {c.id: c for c in hits})
             return item
         return PlanItem(
             "artist", key, label, "unavailable",
             message=f"No match found on {self.provider.capitalize()}.",
         )
+
+    def _describe_artists(self, item: PlanItem, hits: dict[str, CatalogArtist]) -> None:
+        """Add the facts that tell same-named artists apart, best guess first.
+
+        Several artists really can carry the same name — they are different
+        acts, not duplicate entries — so the name alone is nothing to choose by.
+        """
+        # When the name matches outright, near-misses like "System 74" for
+        # "System 7" are only clutter in a list you have to choose from.
+        wanted = self.m.norm(item.label)
+        exact = [c for c in item.candidates if self.m.norm(c.display) == wanted]
+        if exact:
+            item.candidates[:] = exact
+
+        mine = self._local_albums.get(self.m.norm(item.label)) or {}
+        known: list[str] = []
+        for c in item.candidates:
+            hit = hits.get(c.ref)
+            c.url = hit.url if hit else None
+            albums = self._artist_albums(c.ref)
+            c.detail = artist_detail(CatalogArtist(id=c.ref, name=c.display, albums=albums))
+            owned = [mine[self.m.norm(t.rsplit(" (", 1)[0])] for t in albums
+                     if self.m.norm(t.rsplit(" (", 1)[0]) in mine]
+            if owned:
+                c.detail = f"you have {owned[0]} by this artist — {c.detail}"
+                known.append(c.ref)
+        if known:
+            item.candidates.sort(key=lambda c: c.ref not in known)
+            item.message = (
+                "Several artists share this name — different acts, not duplicates. "
+                "One of them made a record in your Local Data; it is listed first."
+            )
+        elif len({self.m.norm(c.display) for c in item.candidates}) < len(item.candidates):
+            item.message = (
+                "Several artists share this name — different acts, not duplicates. "
+                "Tell them apart by their releases below."
+            )
+
+    def _artist_albums(self, artist_id: str) -> list[str]:
+        fetch = getattr(self.backend, "artist_albums", None)
+        if fetch is None:
+            return []
+        try:
+            return list(fetch(artist_id))
+        except Exception:  # a nicety; never fail planning over it
+            return []

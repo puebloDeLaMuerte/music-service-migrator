@@ -184,10 +184,17 @@ def fetch_all_playlists() -> list[Playlist]:
         try:
             tracks = fetch_playlist_tracks(item["id"])
         except SpotifyException as exc:
-            log.warning(
-                "Skipping '%s' – API returned %s: %s",
-                item["name"], exc.http_status, exc.msg,
-            )
+            if exc.http_status == 403:
+                log.warning(
+                    "Skipping '%s' — Spotify does not let apps read the contents of this "
+                    "playlist (owner: %s). Nothing we can do from here.",
+                    item["name"], (item.get("owner") or {}).get("display_name") or "?",
+                )
+            else:
+                log.warning(
+                    "Skipping '%s' – API returned %s: %s",
+                    item["name"], exc.http_status, exc.msg,
+                )
             skipped += 1
             continue
         playlists.append(

@@ -35,6 +35,7 @@ T = TypeVar("T")
 _SEARCH_LIMIT = 10
 _LIBRARY_BATCH = 40
 _PLAYLIST_BATCH = 100
+_ARTIST_ALBUMS = 4
 
 
 def _retry_after(exc: Exception) -> float | None:
@@ -60,6 +61,14 @@ def _track(d: dict) -> CatalogTrack:
         album=(d.get("album") or {}).get("name"),
         duration_ms=d.get("duration_ms"),
         isrc=(d.get("external_ids") or {}).get("isrc"),
+    )
+
+
+def _artist(d: dict) -> CatalogArtist:
+    return CatalogArtist(
+        id=d["id"],
+        name=d.get("name") or "",
+        url=(d.get("external_urls") or {}).get("spotify"),
     )
 
 
@@ -117,15 +126,31 @@ class SpotifyPushBackend:
         return (item.get("owner") or {}).get("id") == self.me_id or bool(item.get("collaborative"))
 
     def snapshot(self) -> RemoteSnapshot:
+        """Current library. Contents are read only for playlists we could write to.
+
+        Playlists you merely follow can never be a push target, so fetching
+        their tracks would only cost time — and Spotify refuses it outright for
+        some of them (HTTP 403 on the item list, even though their metadata
+        reads fine).
+        """
         playlists: list[Playlist] = []
         editable: set[str] = set()
+        followed = 0
         for item in self._raw_playlists():
-            try:
-                tracks = self._call(lambda: fetch_playlist_tracks(item["id"]))
-            except SpotifyException as exc:
-                log.warning("Skipping '%s' – API returned %s", item.get("name"), exc.http_status)
-                continue
-            if self._editable(item):
+            mine = self._editable(item)
+            if not mine:
+                followed += 1
+            tracks = []
+            if mine:
+                try:
+                    tracks = self._call(lambda: fetch_playlist_tracks(item["id"]))
+                except SpotifyException as exc:
+                    log.warning(
+                        "Spotify would not list the tracks of your playlist '%s' (HTTP %s) — "
+                        "planning without it",
+                        item.get("name"), exc.http_status,
+                    )
+                    continue
                 editable.add(item["id"])
             playlists.append(
                 Playlist(
@@ -141,6 +166,12 @@ class SpotifyPushBackend:
                     service_id=item["id"],
                     service=SERVICE,
                 )
+            )
+        if followed:
+            log.info(
+                "%d playlists you only follow — kept in the plan, contents not read "
+                "(they can't be push targets)",
+                followed,
             )
         library = Library(
             last_pull_provider=SERVICE,
@@ -171,13 +202,17 @@ class SpotifyPushBackend:
         return self._lookup(ids, lambda i: self.sp.album(i), _album)
 
     def lookup_artists(self, ids: list[str]) -> dict[str, CatalogArtist]:
-        return self._lookup(ids, lambda i: self.sp.artist(i), lambda d: CatalogArtist(id=d["id"], name=d.get("name") or ""))
+        return self._lookup(ids, lambda i: self.sp.artist(i), _artist)
 
     def _search(self, q: str, kind: str) -> list[dict]:
         res = self._call(lambda: self.sp.search(q=q, type=kind, limit=_SEARCH_LIMIT))
         return [x for x in ((res or {}).get(f"{kind}s") or {}).get("items") or [] if x and x.get("id")]
 
     def tracks_by_isrc(self, isrc: str) -> list[CatalogTrack]:
+        from common.push.isrc import valid_isrc
+
+        if not valid_isrc(isrc):
+            return []
         return [_track(d) for d in self._search(f"isrc:{_q(isrc)}", "track")]
 
     def albums_by_upc(self, upc: str) -> list[CatalogAlbum]:
@@ -198,7 +233,27 @@ class SpotifyPushBackend:
         return [_album(d) for d in self._search(q, "album")]
 
     def search_artists(self, name: str) -> list[CatalogArtist]:
-        return [CatalogArtist(id=d["id"], name=d.get("name") or "") for d in self._search(f'artist:"{_q(name)}"', "artist")]
+        return [_artist(d) for d in self._search(f'artist:"{_q(name)}"', "artist")]
+
+    def artist_albums(self, artist_id: str) -> list[str]:
+        try:
+            res = self._call(
+                lambda: self.sp.artist_albums(
+                    artist_id, album_type="album,single", limit=_ARTIST_ALBUMS
+                )
+            )
+        except SpotifyException:
+            return []
+        seen: set[str] = set()
+        out = []
+        for d in (res or {}).get("items") or []:
+            title = d.get("name") or ""
+            if not title or title.casefold() in seen:
+                continue
+            seen.add(title.casefold())
+            year = (d.get("release_date") or "")[:4]
+            out.append(f"{title} ({year})" if year else title)
+        return out
 
     def playlist_version(self, playlist_id: str) -> str | None:
         d = self._call(lambda: self.sp.playlist(playlist_id, fields="snapshot_id"))

@@ -468,9 +468,11 @@ def build_remote_wipe_plan(
     if seed_id is None and item.candidates:
         seed_id = item.candidates[0].ref
     if seed_id:
-        b.ops.append({"op": "add_liked", "ids": [seed_id], "labels": [f"{title} — {artist}"]})
+        b.ops.append({"op": "add_liked", "ids": [seed_id], "labels": ["1 liked song"]})
     else:
-        b.warnings.append(f'"{title}" by {artist} was not found on {b.title}; the library will stay empty.')
+        b.warnings.append(
+            f"Could not add a liked song after the wipe on {b.title}; the library may stay empty."
+        )
     doc = b.document(REMOTE_WIPE_KIND, None)
     doc["items"] = []
     doc["summary"]["can_apply"] = True
@@ -517,20 +519,23 @@ def prepare_push(
     backend: PushBackend | None = None,
     library: Library | None = None,
     workspace_root: Path | None = None,
-) -> tuple[dict[str, Any], bool]:
+) -> tuple[dict[str, Any], str]:
     """Latest plan for Push Now; re-plans when Local Data, removals, decisions or matching changed.
 
-    Returns ``(plan, refreshed)``.
+    Returns ``(plan, reason)`` where ``reason`` is empty when the stored plan was
+    reused, ``"new"`` when no plan existed for this mode, and ``"changed"`` when a
+    stored plan was replaced because its inputs no longer match.
     """
     library = _local_library(library)
     plan = load_latest_plan(provider, mode.value, workspace_root=workspace_root)
     current = library_fingerprint(library, workspace_root=workspace_root)
     if plan is not None and plan.get("library_fingerprint") == current:
-        return plan, False
+        return plan, ""
+    reason = "changed" if plan is not None else "new"
     plan = dry_run_push(
         provider, mode, backend=backend, library=library, workspace_root=workspace_root
     )
-    return plan, True
+    return plan, reason
 
 
 def dry_run_remote_wipe(

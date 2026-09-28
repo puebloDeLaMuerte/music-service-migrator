@@ -28,6 +28,7 @@ T = TypeVar("T")
 _SEARCH_LIMIT = 10
 _PLAYLIST_BATCH = 100
 _FAVORITES_BATCH = 50
+_ARTIST_ALBUMS = 4
 
 
 def _retry_after(exc: Exception) -> float | None:
@@ -46,6 +47,14 @@ def _track(t: Any) -> CatalogTrack:
         album=t.album.name if getattr(t, "album", None) else None,
         duration_ms=int(t.duration * 1000) if getattr(t, "duration", None) else None,
         isrc=getattr(t, "isrc", None),
+    )
+
+
+def _artist(a: Any) -> CatalogArtist:
+    return CatalogArtist(
+        id=str(a.id),
+        name=a.name or "",
+        url=getattr(a, "share_url", None) or getattr(a, "listen_url", None),
     )
 
 
@@ -102,20 +111,37 @@ class TidalPushBackend:
         return isinstance(pl, UserPlaylist)
 
     def snapshot(self) -> RemoteSnapshot:
+        """Current library. Contents are read only for playlists we could write to.
+
+        Playlists you merely follow can never be a push target, so reading their
+        tracks would only cost time.
+        """
         s = self.session
         playlists = []
         editable: set[str] = set()
+        followed = 0
         for pl in self._raw_playlists():
+            mine = self._editable(pl)
             try:
-                common = self._call(lambda: _tidal_playlist_to_common(s, pl))
+                common = self._call(
+                    lambda: _tidal_playlist_to_common(s, pl, with_tracks=mine)
+                )
             except (ObjectNotFound, TooManyRequests) as exc:
                 log.warning("Skipping playlist %s: %s", getattr(pl, "name", "?"), exc)
                 continue
-            if self._editable(pl) and common.service_id:
+            if mine and common.service_id:
                 editable.add(common.service_id)
                 if not common.snapshot_id:
                     common.snapshot_id = self.playlist_version(common.service_id)
+            else:
+                followed += 1
             playlists.append(common)
+        if followed:
+            log.info(
+                "%d playlists you only follow — kept in the plan, contents not read "
+                "(they can't be push targets)",
+                followed,
+            )
         library = Library(
             last_pull_provider=SERVICE,
             playlists=playlists,
@@ -146,6 +172,10 @@ class TidalPushBackend:
         return self._lookup(ids, self.session.artist, lambda a: CatalogArtist(id=str(a.id), name=a.name or ""))
 
     def tracks_by_isrc(self, isrc: str) -> list[CatalogTrack]:
+        from common.push.isrc import valid_isrc
+
+        if not valid_isrc(isrc):
+            return []
         try:
             return [_track(t) for t in self._call(lambda: self.session.get_tracks_by_isrc(isrc))]
         except (InvalidISRC, ObjectNotFound):
@@ -174,7 +204,25 @@ class TidalPushBackend:
     def search_artists(self, name: str) -> list[CatalogArtist]:
         from tidalapi.artist import Artist
 
-        return [CatalogArtist(id=str(a.id), name=a.name or "") for a in self._search(name, Artist, "artists")]
+        return [_artist(a) for a in self._search(name, Artist, "artists")]
+
+    def artist_albums(self, artist_id: str) -> list[str]:
+        try:
+            albums = self._call(lambda: self.session.artist(artist_id).get_albums(limit=_ARTIST_ALBUMS))
+        except (ObjectNotFound, AttributeError):
+            return []
+        seen: set[str] = set()
+        out = []
+        for a in albums or []:
+            title = getattr(a, "name", "") or ""
+            if not title or title.casefold() in seen:
+                continue
+            seen.add(title.casefold())
+            year = getattr(a, "year", None) or (
+                a.release_date.year if getattr(a, "release_date", None) else None
+            )
+            out.append(f"{title} ({year})" if year else title)
+        return out
 
     def playlist_version(self, playlist_id: str) -> str | None:
         res = self._call(lambda: self.session.request.request("GET", f"playlists/{playlist_id}"))

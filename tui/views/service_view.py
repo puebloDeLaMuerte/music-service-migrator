@@ -10,6 +10,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from rich.markup import escape
@@ -22,7 +23,11 @@ from textual.widgets import Label, ListItem, ListView, RichLog, Static
 from common import config
 from common.catalog_adapters import CatalogPullAdapter, get_catalog_pull
 from tui.app import LogBridge, LogHighlighter
+from tui.running_status import RunningStatus
 from tui.views.base import BaseView
+
+if TYPE_CHECKING:
+    from tui.views.push_plan_modal import InspectResult
 
 # https? URLs — tidalapi prints the login link as plain text; Rich link style enables
 # OSC-8 hyperlinks + Textual click-to-open in :class:`LinkedRichLog`.
@@ -162,6 +167,8 @@ class ServiceView(BaseView):
         self._service = service
         self._title = service.capitalize()
         self._op_active = False
+        self._running: RunningStatus | None = None
+        self._idle_status = "↑↓ select action  ·  Enter to confirm"
         from common.push.models import PushMode
 
         self._push_mode = PushMode.ADD
@@ -314,9 +321,10 @@ class ServiceView(BaseView):
             f"{self._push_mode_blurb()}\n\n"
             "Source: everything under [bold]Local Data[/] in the sidebar.\n\n"
             f"Reads your current {self._title} library and searches the catalog for "
-            f"every item. Nothing is changed on {self._title}. The report lists what "
-            "would change; items with several possible matches come first and must be "
-            "settled in [bold]Inspect Push Plan[/] before Push Now.\n\n"
+            f"every item. Nothing is changed on {self._title}.\n\n"
+            "The report is printed here and kept with the plan, so you can read it "
+            "again later under [bold]Inspect Push Plan[/]. Items with several possible "
+            "matches must be settled there before Push Now.\n\n"
             "Press [bold]Enter[/] to run the dry run."
         )
         self.query_one("#svc-detail", Static).update(text)
@@ -342,7 +350,9 @@ class ServiceView(BaseView):
             )
             body = (
                 f"{state}\n\n"
-                "Pick the right match for each item, or exclude it from pushing. "
+                "Three pages: [bold]Summary[/] (what the plan would do in numbers), "
+                "[bold]Full report[/] (the whole dry-run text, kept for re-reading) and "
+                "the items needing a decision — pick the right match or exclude them. "
                 "Earlier decisions are listed too and can be undone.\n\n"
                 "Press [bold]Enter[/] to open."
             )
@@ -353,9 +363,11 @@ class ServiceView(BaseView):
             f"[bold]{self._title} — Push Now[/]\n\n"
             f"{self._write_scope_hint()}"
             f"{self._push_mode_blurb()}\n\n"
-            "Uses the last dry run for this mode. If Local Data, recorded removals, "
-            "your decisions or the matching rules changed since, it plans again first. "
-            "You see a summary and confirm before anything is written.\n\n"
+            "Uses the last dry run for this mode. If there is none, or Local Data, "
+            "recorded removals, your decisions or the matching rules changed since, it "
+            "builds a fresh plan first and says so — in that case nothing was reviewed "
+            "by you, only summarised. Either way you see a summary and confirm before "
+            f"anything is written to {self._title}.\n\n"
             "If a previous Push Now stopped midway, running it again continues where "
             "it left off.\n\n"
             "Press [bold]Enter[/] to start."
@@ -371,8 +383,7 @@ class ServiceView(BaseView):
             "  • liked songs\n"
             "  • saved albums\n"
             "  • followed artists\n\n"
-            "Local Data and other services are not touched. Afterwards, "
-            '"Resist" by Wipers is added to your liked songs.\n\n'
+            "Local Data and other services are not touched.\n\n"
             f"{self._write_scope_hint()}"
             "Press [bold]Enter[/] to see what would be removed; you confirm before "
             "anything happens."
@@ -477,8 +488,26 @@ class ServiceView(BaseView):
             )
         self.query_one("#svc-detail", Static).update(text)
 
-    def _restore_detail_pane(self, body: str) -> None:
+    def _running_status(self) -> RunningStatus:
+        if self._running is None:
+            self._running = RunningStatus(self.query_one("#svc-status", Static))
+        return self._running
+
+    def _begin_op(self, message: str | None = None) -> None:
+        self._op_active = True
+        msg = message or f"{self._title} operation running…"
+        self._running_status().start(msg)
+
+    def _end_op(self) -> None:
         self._op_active = False
+        self._running_status().stop()
+        self._paint_idle_status()
+
+    def _paint_idle_status(self) -> None:
+        self.query_one("#svc-status", Static).update(f"  {self._idle_status}")
+
+    def _restore_detail_pane(self, body: str) -> None:
+        self._end_op()
         log_w = self.query_one("#svc-log", LinkedRichLog)
         log_w.remove_class("visible")
         detail = self.query_one("#svc-detail", Static)
@@ -498,13 +527,8 @@ class ServiceView(BaseView):
 
     def _update_status(self) -> None:
         if self._op_active:
-            self.query_one("#svc-status", Static).update(
-                f"  {self._title} operation running…"
-            )
-        else:
-            self.query_one("#svc-status", Static).update(
-                f"  ↑↓ select action  ·  Enter to confirm"
-            )
+            return
+        self._paint_idle_status()
 
     # ── Events ──────────────────────────────────────────────────────
 
@@ -579,13 +603,12 @@ class ServiceView(BaseView):
 
     # ── Operations ──────────────────────────────────────────────────
 
-    def _switch_to_log(self) -> None:
-        self._op_active = True
+    def _switch_to_log(self, *, running_message: str | None = None) -> None:
         self.query_one("#svc-detail").styles.display = "none"
         self.query_one("#svc-pane-title", Static).update("Log")
         log = self.query_one("#svc-log", LinkedRichLog)
         log.add_class("visible")
-        self._update_status()
+        self._begin_op(running_message)
 
     def _start_pull(self) -> None:
         from common.catalog_adapters import get_catalog_pull
@@ -632,7 +655,40 @@ class ServiceView(BaseView):
         return self.query_one("#svc-log", LinkedRichLog)
 
     def _set_status(self, text: str) -> None:
-        self.query_one("#svc-status", Static).update(f"  {text}")
+        self._idle_status = text
+        if not self._op_active:
+            self._paint_idle_status()
+
+    def _refresh_plan_if_stale_blocked(self, plan: dict) -> dict:
+        from common.push.decisions import unsettled_decision_count
+        from common.push.planner import dry_run_push
+
+        summary = plan.get("summary") or {}
+        if summary.get("can_apply"):
+            return plan
+        if unsettled_decision_count(plan) > 0:
+            return plan
+        return dry_run_push(self._service, self._push_mode)
+
+    def _offer_push_blocked(self, plan: dict) -> None:
+        from common.push.decisions import push_blocked_guidance, unsettled_decision_count
+        from tui.views.push_blocked_modal import PushBlockedModal
+
+        log_widget = self._log()
+        log_widget.write("\n[bold yellow]Push blocked — picks still needed[/]\n")
+        log_widget.write(escape(push_blocked_guidance(plan)) + "\n")
+        self._set_status(
+            "Push blocked — open Inspect Push Plan (decisions list)."
+        )
+        if unsettled_decision_count(plan) > 0:
+            self.app.push_screen(PushBlockedModal(plan), self._after_push_blocked_modal)
+        else:
+            self._reveal_menu_detail_pane()
+
+    def _after_push_blocked_modal(self, open_inspect: bool | None) -> None:
+        self._reveal_menu_detail_pane()
+        if open_inspect:
+            self._start_push_inspect()
 
     def _attach_log_bridge(self) -> logging.Handler:
         bridge = LogBridge(self._log())
@@ -666,7 +722,11 @@ class ServiceView(BaseView):
             return
         self.app.push_screen(PushPlanModal(plan), self._after_inspect)
 
-    def _after_inspect(self, changed: bool | None) -> None:
+    def _after_inspect(self, result: InspectResult | None) -> None:
+        changed = bool(result and result.changed)
+        if result and result.push:
+            self._start_push_now()
+            return
         self._reveal_menu_detail_pane()
         if changed:
             self.query_one("#svc-detail", Static).update(
@@ -697,14 +757,20 @@ class ServiceView(BaseView):
             plan = await asyncio.to_thread(dry_run_push, self._service, self._push_mode)
             log_widget.write("")
             log_widget.write(escape(format_plan_report(plan)))
-            self._set_status("Dry run complete.")
+            log_widget.write(
+                "\n[dim]This report is kept with the plan — reopen it any time under "
+                "[bold]Inspect Push Plan[/] (Summary / Full report).[/]"
+            )
+            if not (plan.get("summary") or {}).get("can_apply"):
+                self._offer_push_blocked(plan)
+            else:
+                self._set_status("Dry run complete — report kept in Inspect Push Plan.")
         except Exception as exc:
             self._write_push_error(exc)
             self._set_status("Dry run failed.")
         finally:
             logging.getLogger().removeHandler(bridge)
-            self._op_active = False
-            self._update_status()
+            self._end_op()
             self._refresh_inspect_availability()
 
     async def _do_push_now(self) -> None:
@@ -716,31 +782,48 @@ class ServiceView(BaseView):
         log_widget.write(f"[bold]Push Now → {self._title} · {self._mode_title()}[/]\n")
         bridge = self._attach_log_bridge()
         try:
-            plan, refreshed = await asyncio.to_thread(prepare_push, self._service, self._push_mode)
+            plan, replanned = await asyncio.to_thread(prepare_push, self._service, self._push_mode)
+            plan = await asyncio.to_thread(self._refresh_plan_if_stale_blocked, plan)
         except Exception as exc:
             self._write_push_error(exc)
             self._set_status("Push failed.")
             return
         finally:
             logging.getLogger().removeHandler(bridge)
-            self._op_active = False
-            self._update_status()
+            self._end_op()
             self._refresh_inspect_availability()
 
-        if refreshed:
-            log_widget.write("Things changed since the last dry run — planned again:\n")
+        if replanned:
+            log_widget.write(
+                "[yellow]No plan for this mode yet — built one just now:[/]\n"
+                if replanned == "new"
+                else "[yellow]Local Data, your removals or your decisions changed since the "
+                "last dry run — planned again:[/]\n"
+            )
             log_widget.write(escape(format_plan_report(plan)))
         summary = plan.get("summary") or {}
         if not summary.get("can_apply"):
-            log_widget.write(f"\n[bold yellow]{escape(summary.get('blocking_reason') or 'Blocked.')}[/]")
-            self._set_status("Push blocked — decisions needed.")
+            self._offer_push_blocked(plan)
             return
         if not plan.get("operations"):
             log_widget.write(f"\n[green]{self._title} already matches — nothing to change.[/]")
             self._set_status("Nothing to push.")
             return
+        if replanned == "new":
+            note = (
+                "[yellow]There was no plan for this mode, so one was built just now — "
+                "you have not reviewed it. Cancel and use Push (dry run) to read it first.[/]\n\n"
+            )
+        elif replanned == "changed":
+            note = (
+                "[yellow]Inputs changed since the last dry run, so the plan was rebuilt just "
+                "now. The numbers below are from the new plan.[/]\n\n"
+            )
+        else:
+            note = ""
         body = (
             f"[bold]Push Now → {self._title} · {self._mode_title()}[/]\n\n"
+            f"{note}"
             f"{escape(confirm_summary(plan))}\n\n"
             f"Apply these changes to {self._title}?"
         )
@@ -762,8 +845,7 @@ class ServiceView(BaseView):
             return
         finally:
             logging.getLogger().removeHandler(bridge)
-            self._op_active = False
-            self._update_status()
+            self._end_op()
             self._refresh_inspect_availability()
 
         log_widget.write(escape(format_plan_report(plan)))
@@ -782,8 +864,7 @@ class ServiceView(BaseView):
             self._log().write(f"\nCancelled — nothing was changed on {self._title}.")
             self._set_status("Cancelled.")
             return
-        self._op_active = True
-        self._update_status()
+        self._begin_op(f"Applying to {self._title}…")
         self.run_worker(self._do_apply(plan), group="svc-op")
 
     async def _do_apply(self, plan: dict) -> None:
@@ -809,8 +890,7 @@ class ServiceView(BaseView):
             self._set_status("Push stopped.")
         finally:
             logging.getLogger().removeHandler(bridge)
-            self._op_active = False
-            self._update_status()
+            self._end_op()
             self._refresh_inspect_availability()
 
     def _start_login(self) -> None:
@@ -941,7 +1021,5 @@ class ServiceView(BaseView):
             )
         finally:
             root.removeHandler(bridge)
-            # Always release the UI lock so the menu + detail pane work again after Pull/Backup.
-            self._op_active = False
-            self._update_status()
+            self._end_op()
             self._refresh_inspect_availability()

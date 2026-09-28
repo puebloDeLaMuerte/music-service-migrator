@@ -10,9 +10,9 @@ only a push is.
 | --- | --- |
 | Push mode: Push-Add / Push-Delete / Wipe-Push | Selects what Push (dry run) and Push Now do |
 | Push (dry run) | Reads the service library, matches everything, stores a plan, prints a report. Changes nothing. |
-| Inspect Push Plan | Settle items with several possible matches: pick one (`1`-`9`), exclude (`x`), undo (`u`). Greyed out unless the last dry run for this mode still matches Local Data. |
-| Push Now | Uses the last plan; re-plans first if anything changed; confirm; apply (resumable) |
-| Wipe | Removes all playlists, liked songs, saved albums and followed artists on the service, then likes "Resist" by Wipers |
+| Inspect Push Plan | The plan's home: **Summary** (headline numbers), **Full report** (the dry-run text, re-readable any time), **Push now** (locked while anything is unsettled) and the items needing a decision — move between matches (`←→`), pick one (`Enter` or `1`-`9`), open it in a browser (`o`), copy its link (`c`), exclude (`x`), undo (`u`). Greyed out unless the last dry run for this mode still matches Local Data. |
+| Push Now | Uses the last plan; re-plans first if there is none or anything changed (and says which); confirm; apply (resumable) |
+| Wipe | Removes all playlists, liked songs, saved albums and followed artists on the service |
 
 Backups of Local Data and loading saved libraries back live under
 **Services → Local Files** (`backups/local/<date-time>/`; service Backup runs
@@ -48,7 +48,23 @@ album and artist, in this order:
 
 "Can't be pushed" only when every step finds nothing (or for local files).
 Several close candidates with different titles/artists become a decision
-item and block Push Now until settled. Rules live in
+item and block Push Now until settled.
+
+Same-named artists are a normal case, not a bug: services really do list
+several different acts under one name. A decision item therefore shows each
+candidate's releases and a link, and if one of them made a record in your
+Local Data, that one is listed first. Releases are fetched only for artists
+you actually have to choose between (`artist_albums` on the backend).
+
+A TUI captures the mouse, so a printed link is neither clickable nor
+selectable. The link is therefore shown for the selected match only, and `o`
+opens it in the default browser while `c` puts it on the clipboard (a local
+tool such as `pbcopy` first, then the terminal's own escape sequence, which
+macOS Terminal ignores). It is also emitted as a terminal hyperlink, so
+⌘-click works in iTerm2, Kitty, WezTerm and Ghostty. Failing all that, holding
+⌥ Option while dragging selects text the normal way.
+
+Rules live in
 `work/meta/push_matching.json` (written with defaults on first use):
 thresholds, weights, duration tolerance, `ignore_patterns` (e.g. remaster,
 feat., deluxe — treated as the same song) and `prompt_patterns` (live, remix,
@@ -60,12 +76,33 @@ playlist with that name. Several editable playlists with one name become a
 decision item. A same-name playlist you can't edit gets an owned copy.
 Playlists are never duplicated because of an id mismatch.
 
+## Reading the service library
+
+`snapshot()` reads the track list only for playlists the account may write to.
+Playlists you merely follow can never be a push target, so their contents are
+irrelevant — they are still listed (Wipe-Push unfollows extras), just not read.
+This also sidesteps Spotify refusing the item list of some followed playlists
+with HTTP 403 while serving their metadata fine. Pull does read everything and
+reports those playlists as skipped, because there it is your data being
+exported. `common/log.py` drops spotipy's raw 403/404 error lines, since the
+code that handles them already says what was skipped.
+
 ## Plans, stale plans, resume
 
 - Plans: `work/meta/push_plans/{provider}_{mode}_latest.json` (items,
   per-playlist summary, warnings, ordered operations).
 - A plan stores a fingerprint of Local Data, removal records, decisions and
   matching rules. Push Now re-plans when it differs, then asks to confirm.
+  Nothing is ever written without that confirmation; when the plan had to be
+  built on the spot, the dialog says so — for a brand-new plan it warns that
+  you have not reviewed it.
+- The report lives in the plan file, so the dry-run text is not lost when the
+  log scrolls away: `report.py` renders Summary, Full report and the confirm
+  dialog from the same numbers (`plan_counts`).
+- Your picks live in `push_decisions.json` and outlive the plan. A new dry
+  run rebuilds the plan and applies them: Summary and the dry-run report then
+  say how many conflicts those past decisions resolved, and how many still
+  need a pick. The **Push now** row unlocks when none are left.
 - Dry runs are not resumable. Push Now records finished steps in
   `{provider}_{mode}_progress.json`; running it again continues. A playlist
   that changed on the service after the dry run is not overwritten — run the

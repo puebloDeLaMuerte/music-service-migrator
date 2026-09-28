@@ -86,6 +86,16 @@ def log_level() -> str:
     return get("LOG_LEVEL", "INFO")
 
 
+def tui_activity_blink_ms() -> int:
+    """Interval for the running-status blink (env ``TUI_ACTIVITY_BLINK_MS``, default 600)."""
+    _ensure_loaded()
+    raw = get("TUI_ACTIVITY_BLINK_MS", "600")
+    try:
+        return max(200, int(float(raw or "600")))
+    except (TypeError, ValueError):
+        return 600
+
+
 def tui_status_flash_seconds() -> float:
     """How long transient TUI status lines stay visible before restoring baseline.
 

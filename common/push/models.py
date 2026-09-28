@@ -48,6 +48,10 @@ class CatalogAlbum:
 class CatalogArtist:
     id: str
     name: str
+    albums: list[str] = field(default_factory=list)
+    """A few releases ("Title (2023)"), filled only when telling namesakes apart."""
+    url: str | None = None
+    """Public web page, so the user can look the artist up."""
 
 
 @dataclass
@@ -76,11 +80,14 @@ ItemStatus = Literal[
 
 @dataclass
 class Candidate:
-    """One possible catalog match, shown to the user by ``display`` only."""
+    """One possible catalog match. The user sees ``display``, ``detail`` and ``url``."""
 
     ref: str
     display: str
     score: float
+    detail: str | None = None
+    """Facts that tell this candidate apart from the others (e.g. its releases)."""
+    url: str | None = None
 
 
 @dataclass
@@ -107,7 +114,13 @@ class PlanItem:
             "method": self.method,
             "confidence": self.confidence,
             "candidates": [
-                {"ref": c.ref, "display": c.display, "score": round(c.score, 3)}
+                {
+                    "ref": c.ref,
+                    "display": c.display,
+                    "score": round(c.score, 3),
+                    "detail": c.detail,
+                    "url": c.url,
+                }
                 for c in self.candidates
             ],
             "message": self.message,

@@ -267,6 +267,18 @@ def display_track(c: CatalogTrack) -> str:
     return " · ".join(parts)
 
 
+def artist_detail(c: CatalogArtist) -> str:
+    """What sets this artist apart from a namesake: their releases.
+
+    Same-named artists are different acts, not duplicates, and a name alone
+    gives the user nothing to choose by. An empty discography is a fact too —
+    it usually marks a stub entry nothing was ever released under.
+    """
+    if c.albums:
+        return "releases: " + " · ".join(c.albums[:3])
+    return "no releases visible in the catalog"
+
+
 def display_album(c: CatalogAlbum) -> str:
     parts = [f"{c.title} — {', '.join(c.artists)}" if c.artists else c.title]
     if c.year:

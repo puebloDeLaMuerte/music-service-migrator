@@ -356,6 +356,7 @@ class P2AView(BaseView):
                     f"[yellow]No playlist matching '{self._filter}'.[/]"
                 )
                 self._update_status()
+                self._focus_playlist_list()
                 return
 
         saved_ids = {
@@ -375,6 +376,7 @@ class P2AView(BaseView):
                 "No playlists with detected albums (>= 80% match)."
             )
             self._update_status()
+            self._focus_playlist_list()
             return
 
         for pi, (pl, result) in enumerate(self._results):
@@ -398,6 +400,7 @@ class P2AView(BaseView):
         self._update_status()
         lv.index = 0
         self._refresh_detail_from_list()
+        self._focus_playlist_list()
 
     def _update_status(self) -> None:
         n = len(self._results)
@@ -406,6 +409,14 @@ class P2AView(BaseView):
             r"\[d] remove from playlist  ·  \[v] keep in playlist  ·  "
             r"\[n] leave unchanged  ·  \[l] list tracks"
         )
+
+    def _focus_playlist_list(self) -> None:
+        lv = self.query_one("#playlist-list", ListView)
+        if not lv.children:
+            return
+        if lv.index is None or lv.index >= len(lv.children):
+            lv.index = 0
+        lv.focus()
 
     # ── Actions ───────────────────────────────────────────────────
 
@@ -492,6 +503,7 @@ class P2AView(BaseView):
             self._status_line.set_baseline(f"  Error: {exc}")
             return
         await self._load_data()
+        self._focus_playlist_list()
 
     def action_extract_delete(self) -> None:
         bundle = self._selection_bundle()
@@ -573,3 +585,4 @@ class P2AView(BaseView):
             self._status_line.set_baseline(f"  Error: {exc}")
             return
         await self._load_data()
+        self._focus_playlist_list()

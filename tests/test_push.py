@@ -26,7 +26,7 @@ from common.push.matching import DEFAULT_MATCHING, Matcher, Scored, decide
 from common.push.models import CatalogAlbum, CatalogArtist, CatalogTrack, PushMode, RemoteSnapshot
 from common.push.ordering import merge_order
 from common.push.planner import build_remote_wipe_plan, dry_run_push, prepare_push
-from common.push.report import format_plan_report
+from common.push.report import format_plan_details, format_plan_report
 from common.push.resolution_cache import EXCLUDE, set_decision
 from common.push.sync_intent import (
     load_sync_intents,
@@ -74,6 +74,7 @@ class FakeBackend:
         self.albums = {"al_1": CatalogAlbum(id="al_1", title="Record", artists=["Band"], artist_ids=["ar_Band"])}
         self.artists = {"ar_Band": CatalogArtist(id="ar_Band", name="Band"),
                         "ar_Other": CatalogArtist(id="ar_Other", name="Other")}
+        self.artist_discography: dict[str, list[str]] = {}
         self.playlists: dict[str, dict] = {}
         self.liked: list[str] = []
         self.saved_albums: list[str] = []
@@ -151,6 +152,10 @@ class FakeBackend:
 
     def search_artists(self, name):
         return [a for a in self.artists.values() if name.casefold() in a.name.casefold()]
+
+    def artist_albums(self, artist_id):
+        self.calls.append("artist_albums")
+        return list(self.artist_discography.get(artist_id, []))
 
     def playlist_version(self, pid):
         return str(self.playlists[pid]["version"])
@@ -417,12 +422,13 @@ class ExecutorTests(_Workspace):
     def test_prepare_push_replans_only_when_inputs_change(self) -> None:
         fox = lt("Foxtrot", "Band")
         lib = Library(liked_songs=[PlaylistTrack(track=fox, record_meta=META)])
-        self.plan(lib, PushMode.ADD)
-        _, refreshed = prepare_push("spotify", PushMode.ADD, backend=self.fake, library=lib, workspace_root=self.root)
-        self.assertFalse(refreshed)
+        _, reason = prepare_push("spotify", PushMode.ADD, backend=self.fake, library=lib, workspace_root=self.root)
+        self.assertEqual(reason, "new")
+        _, reason = prepare_push("spotify", PushMode.ADD, backend=self.fake, library=lib, workspace_root=self.root)
+        self.assertEqual(reason, "")
         set_decision("spotify", "track", track_key(fox), "t_live", workspace_root=self.root)
-        plan, refreshed = prepare_push("spotify", PushMode.ADD, backend=self.fake, library=lib, workspace_root=self.root)
-        self.assertTrue(refreshed)
+        plan, reason = prepare_push("spotify", PushMode.ADD, backend=self.fake, library=lib, workspace_root=self.root)
+        self.assertEqual(reason, "changed")
         self.assertTrue(plan["summary"]["can_apply"])
 
 
@@ -437,7 +443,7 @@ class RemoteWipeTests(_Workspace):
         self.assertEqual(self.fake.playlists, {})
         self.assertEqual(self.fake.liked, ["t_resist"])
         self.assertEqual((self.fake.saved_albums, self.fake.followed), ([], []))
-        self.assertIn("Resist", format_plan_report(plan))
+        self.assertIn("one liked song", format_plan_report(plan).lower())
 
     def test_missing_seed_track_only_warns(self) -> None:
         self.fake = FakeBackend([c for c in CATALOG if c.id != "t_resist"])
@@ -446,6 +452,155 @@ class RemoteWipeTests(_Workspace):
         self.apply(plan)
         self.assertEqual(self.fake.liked, [])
         self.assertTrue(plan["warnings"])
+
+
+class NamesakeArtistTests(_Workspace):
+    """Several artists can carry the same name; the user needs facts to choose."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.fake.artists = {
+            "ar_g1": CatalogArtist(id="ar_g1", name="Geese", url="https://example.test/g1"),
+            "ar_g2": CatalogArtist(id="ar_g2", name="Geese", url="https://example.test/g2"),
+        }
+        self.fake.artist_discography = {
+            "ar_g1": ["3D Country (2023)", "Projector (2021)"],
+            "ar_g2": ["BBQ Baby (2021)"],
+        }
+        self.fake.albums["al_bbq"] = CatalogAlbum(
+            id="al_bbq", title="BBQ Baby", artists=["Geese"], artist_ids=["ar_g2"]
+        )
+
+    def _followed(self) -> FollowedArtist:
+        # No Spotify id: the local row came from another service, so only the name is known.
+        return FollowedArtist(
+            artist=Artist(name="Geese", service_id="3578350", service="tidal"), record_meta=META
+        )
+
+    def test_candidates_carry_releases_and_a_link(self) -> None:
+        plan = self.plan(Library(followed_artists=[self._followed()]), PushMode.ADD)
+        item = self.item(plan, "artist", "Geese")
+        self.assertEqual(item["status"], "ambiguous")
+        details = {c["ref"]: c["detail"] for c in item["candidates"]}
+        self.assertEqual(details["ar_g1"], "releases: 3D Country (2023) · Projector (2021)")
+        self.assertEqual(details["ar_g2"], "releases: BBQ Baby (2021)")
+        self.assertEqual(
+            {c["url"] for c in item["candidates"]},
+            {"https://example.test/g1", "https://example.test/g2"},
+        )
+        self.assertIn("different acts", item["message"])
+        self.assertIn("3D Country (2023)", format_plan_details(plan))
+
+    def test_an_artist_whose_record_you_own_is_listed_first(self) -> None:
+        lib = Library(
+            followed_artists=[self._followed()],
+            saved_albums=[SavedAlbum(
+                album=Album(name="BBQ Baby", artists=[Artist(name="Geese")]), record_meta=META
+            )],
+        )
+        item = self.item(self.plan(lib, PushMode.ADD), "artist", "Geese")
+        self.assertEqual(item["candidates"][0]["ref"], "ar_g2")
+        self.assertIn("you have BBQ Baby by this artist", item["candidates"][0]["detail"])
+        self.assertIn("listed first", item["message"])
+
+    def test_near_misses_drop_out_when_the_name_matches_outright(self) -> None:
+        self.fake.artists["ar_g4"] = CatalogArtist(id="ar_g4", name="Konkrete Geese")
+        self.fake.artists["ar_g5"] = CatalogArtist(id="ar_g5", name="Geese 74")
+        item = self.item(
+            self.plan(Library(followed_artists=[self._followed()]), PushMode.ADD),
+            "artist", "Geese",
+        )
+        self.assertEqual({c["ref"] for c in item["candidates"]}, {"ar_g1", "ar_g2"})
+
+    def test_releases_are_only_fetched_for_a_real_decision(self) -> None:
+        self.fake.artists = {"ar_solo": CatalogArtist(id="ar_solo", name="Geese")}
+        self.plan(Library(followed_artists=[self._followed()]), PushMode.ADD)
+        self.assertNotIn("artist_albums", self.fake.calls)
+
+
+class ReportTests(_Workspace):
+    def test_overview_leads_the_report_and_counts_deletions(self) -> None:
+        from common.push.report import plan_counts, plan_overview
+
+        mix = self.fake.add_remote_playlist("Mix", ["t_a", "t_d"])
+        self.fake.liked = ["t_d"]
+        self.fake.followed = ["ar_Other"]
+        lib = Library(
+            playlists=[pl("Mix", [lt("Alpha", "Band"), lt("Charlie", "Band")])],
+            liked_songs=[PlaylistTrack(track=lt("Alpha", "Band"), record_meta=META)],
+        )
+        plan = self.plan(lib, PushMode.WIPE)
+        n = plan_counts(plan)
+        self.assertEqual((n["tracks_added"], n["tracks_removed"]), (1, 1))
+        self.assertEqual((n["liked_added"], n["liked_removed"]), (1, 1))
+        self.assertEqual(n["artists_removed"], 1)
+        self.assertEqual(n["deletions"], 3)
+
+        overview = plan_overview(plan)
+        report = format_plan_report(plan)
+        self.assertTrue(report.startswith(overview))
+        self.assertIn("Pushes Local Data to Spotify", overview)
+        self.assertIn("Write steps", overview)
+        self.assertNotIn("Write steps", format_plan_details(plan))
+        self.assertIn("Mix", report)
+        self.assertEqual(self.fake.playlists[mix]["name"], "Mix")
+
+    def test_overview_flags_open_decisions(self) -> None:
+        from common.push.report import plan_counts, plan_overview
+
+        lib = Library(liked_songs=[PlaylistTrack(track=lt("Foxtrot", "Band"), record_meta=META)])
+        plan = self.plan(lib, PushMode.ADD)
+        self.assertEqual(plan_counts(plan)["decisions"], 1)
+        self.assertIn("Need your decision", plan_overview(plan))
+        self.assertIn("0 conflicts were able to be resolved by decisions you made in the past", plan_overview(plan))
+        self.assertIn("1 conflict still needs your decision", plan_overview(plan))
+        self.assertIn("Blocked:", plan_overview(plan))
+
+    def test_overview_names_past_picks(self) -> None:
+        from common.push.report import conflict_context, format_plan_details, plan_counts, plan_overview
+
+        fox = lt("Foxtrot", "Band")
+        lib = Library(liked_songs=[PlaylistTrack(track=fox, record_meta=META)])
+        self.plan(lib, PushMode.ADD)
+        set_decision("spotify", "track", track_key(fox), "t_live", workspace_root=self.root)
+        plan = self.plan(lib, PushMode.ADD)
+        self.assertEqual(plan_counts(plan)["decisions"], 0)
+        self.assertEqual(plan_counts(plan)["settled_by_you"], 1)
+        overview = plan_overview(plan)
+        self.assertIn("1 conflict was able to be resolved by decisions you made in the past", overview)
+        self.assertIn("0 conflicts still need your decision", overview)
+        self.assertIn("Settled by you", overview)
+        self.assertIn("Your pick", format_plan_details(plan))
+        self.assertEqual(
+            conflict_context(0, 0),
+            [],
+        )
+
+
+class PushBlockedGuidanceTests(unittest.TestCase):
+    def test_valid_isrc(self) -> None:
+        from common.push.isrc import valid_isrc
+
+        self.assertTrue(valid_isrc("USRC17607839"))
+        self.assertTrue(valid_isrc("us-rc1-76-07839"))
+        self.assertFalse(valid_isrc(""))
+        self.assertFalse(valid_isrc("not-an-isrc"))
+
+    def test_guidance_mentions_picks_not_catalog_errors(self) -> None:
+        from common.push.decisions import push_blocked_guidance, unsettled_decision_count
+
+        plan = {
+            "provider": "tidal",
+            "summary": {"counts": {"unavailable": 12, "unsupported": 0}},
+            "items": [
+                {"status": "ambiguous", "kind": "track", "key": "k1"},
+            ],
+        }
+        self.assertEqual(unsettled_decision_count(plan), 1)
+        text = push_blocked_guidance(plan)
+        self.assertIn("several possible matches", text)
+        self.assertIn("Inspect Push Plan", text)
+        self.assertIn("12 item(s) cannot be matched", text)
 
 
 class LocalStateTests(_Workspace):

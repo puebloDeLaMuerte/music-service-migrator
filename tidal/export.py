@@ -171,7 +171,10 @@ def _fetch_playlist_tracks(session: "Session", pl: "tidalapi.playlist.Playlist")
     return out
 
 
-def _tidal_playlist_to_common(session: "Session", pl: "tidalapi.playlist.Playlist") -> Playlist:
+def _tidal_playlist_to_common(
+    session: "Session", pl: "tidalapi.playlist.Playlist", *, with_tracks: bool = True
+) -> Playlist:
+    """``with_tracks=False`` keeps the metadata and skips reading the track list."""
     owner: str | None = None
     cr = pl.creator
     if cr is not None:
@@ -185,7 +188,7 @@ def _tidal_playlist_to_common(session: "Session", pl: "tidalapi.playlist.Playlis
             images = [Image(url=u, height=480, width=480)]
         except Exception:
             pass
-    tracks = _fetch_playlist_tracks(session, pl)
+    tracks = _fetch_playlist_tracks(session, pl) if with_tracks else []
     etag = getattr(pl, "_etag", None)
     pid = str(pl.id) if pl.id else None
     return Playlist(
